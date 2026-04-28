@@ -2,24 +2,26 @@
 tracker:
   kind: teambition
   # Teambition project _id (from the project URL path /project/<projectId>)
-  project_slug: "REPLACE_WITH_TEAMBITION_PROJECT_ID"
+  project_slug: "69f04713cfcd439e91aeb107"
   # Resolved at runtime from $TEAMBITION_ACCESS_TOKEN if left as the placeholder below.
   api_key: $TEAMBITION_ACCESS_TOKEN
   # Tenant header. Resolved at runtime from $TEAMBITION_ORGANIZATION_ID if not set here.
   organization_id: $TEAMBITION_ORGANIZATION_ID
   # Endpoint defaults to https://open.teambition.com/api when kind is teambition.
-  # NOTE: yamerl (Erlang YAML parser used by Symphony) is ASCII-only, so configure
-  # status names in English. Mirror these exact names in your Teambition project's
-  # Task Flow settings (中文项目可在任务流设置中创建对应英文流转节点).
+  # Status name strings support UTF-8. Comments here are kept ASCII because
+  # the YAML pre-processor in Symphony's frontmatter parser is stricter than
+  # YamlElixir itself when scanning lines outside quoted scalars.
+  # This project has two flows; we list states from both as candidates.
   active_states:
-    - Todo
-    - In Progress
-    - Review
-    - Merging
+    - "未完成"
+    - "待评审"
+    - "评审中"
+    - "执行中"
   terminal_states:
-    - Done
-    - Closed
-    - Cancelled
+    - "已完成"
+    - "已通过"
+    - "未通过"
+    - "废弃"
 polling:
   interval_ms: 5000
 workspace:
@@ -102,10 +104,18 @@ Use it for any Teambition Open API v3 call. Verified endpoint examples:
 - Keep task metadata current (status, checklist, acceptance criteria, links).
 - Operate autonomously end-to-end unless blocked by missing requirements, secrets, or permissions.
 
-## Status map
+## Status map (this project)
 
-- `Todo` -> queued; transition to `In Progress` before active work.
-- `In Progress` -> implementation actively underway.
-- `Review` -> PR is attached and validated; waiting on human approval.
-- `Merging` -> approved by human; explicitly open and follow `.codex/skills/land/SKILL.md`. Do not call `gh pr merge` directly.
-- `Done` / `Closed` / `Cancelled` -> terminal; no further action required.
+简单流（未完成 -> 已完成）：
+
+- `未完成` -> queued; the agent should pick this up, do the work, then move to `已完成`.
+- `已完成` -> terminal.
+
+评审流（待评审 -> 评审中 / 执行中 / 阻塞 -> 已通过 / 未通过 / 废弃）：
+
+- `待评审` -> queued for review; the agent investigates and either moves to `执行中` (start work)
+  or `评审中` (gather more info).
+- `评审中` -> review in progress; the agent gathers context and posts findings.
+- `执行中` -> implementation actively underway.
+- `阻塞` -> blocked; record blocker in the workpad and stop until unblocked.
+- `已通过` / `未通过` / `废弃` -> terminal.

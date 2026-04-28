@@ -83,7 +83,12 @@ defmodule SymphonyElixir.Workflow do
   end
 
   defp split_front_matter(content) do
-    lines = String.split(content, ~r/\R/, trim: false)
+    # NB: do NOT use ~r/\R/. PCRE's \R matches \r\n, \n, \r, \v, \f, \x85,
+    # U+2028, U+2029 -- but \x85 (NEL) collides with the second/third byte
+    # of common UTF-8 encoded CJK characters such as 0xE5 0xBE 0x85 ("待").
+    # Splitting by \R on UTF-8 text would cut those characters in half.
+    # We only care about CR / LF combinations the YAML spec accepts anyway.
+    lines = String.split(content, ~r/\r\n|\r|\n/, trim: false)
 
     case lines do
       ["---" | tail] ->
