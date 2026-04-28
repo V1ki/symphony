@@ -79,16 +79,21 @@ Work only in the provided repository copy. Do not touch any other path.
 ## Prerequisite: `teambition_api` tool is available
 
 Symphony injects a client-side `teambition_api` tool into the Codex app-server session.
-Use it for any Teambition Open API v3 call. Examples:
+Use it for any Teambition Open API v3 call. Verified endpoint examples:
 
-- Read this task in full:
-  `teambition_api({"path": "/v3/task/{{ issue.id }}", "method": "GET"})`
+- Read this task in full (`/v3/task/query` returns `result[]`):
+  `teambition_api({"path": "/v3/task/query?taskId={{ issue.id }}", "method": "GET"})`
+- List task flow statuses available on this task:
+  `teambition_api({"path": "/v3/task/{{ issue.id }}/tfs", "method": "GET"})`
 - Post a workpad comment:
-  `teambition_api({"path": "/v3/task/{{ issue.id }}/comment", "method": "POST", "body": {"content": "..."}})`
-- Move task status:
-  `teambition_api({"path": "/v3/task/{{ issue.id }}/move-task-flow-status", "method": "POST", "body": {"tfsId": "<tfsId>"}})`
-- List task flow statuses for the project:
-  `teambition_api({"path": "/v3/taskFlowStatus?projectId=<projectId>", "method": "GET"})`
+  `teambition_api({"path": "/v3/task/{{ issue.id }}/comment", "method": "POST", "body": {"content": "...", "renderMode": "markdown"}})`
+- Move task status (PUT, not POST):
+  `teambition_api({"path": "/v3/task/{{ issue.id }}/taskflowstatus", "method": "PUT", "body": {"taskflowstatusId": "<tfsId>", "tfsName": "<status name>"}})`
+- Search project task flow statuses (when you need the full list, e.g. when
+  building a status map):
+  `teambition_api({"path": "/v3/project/<projectId>/taskflowstatus/search", "method": "GET"})`
+- Search tasks across the project (TQL syntax):
+  `teambition_api({"path": "/v3/project/<projectId>/task/query?q=isDone%20%3D%20false", "method": "GET"})`
 
 ## Default posture
 
