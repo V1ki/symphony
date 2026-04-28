@@ -431,7 +431,7 @@ defmodule SymphonyElixir.AppServerTest do
                      [
                        %{
                          "description" => description,
-                         "inputSchema" => %{"required" => ["query"]},
+                         "inputSchema" => %{"required" => ["path"]},
                          "name" => "teambition_api"
                        }
                      ] ->

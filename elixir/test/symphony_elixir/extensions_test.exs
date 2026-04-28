@@ -10,31 +10,35 @@ defmodule SymphonyElixir.ExtensionsTest do
   @endpoint SymphonyElixirWeb.Endpoint
 
   defmodule FakeTeambitionClient do
+    @doc false
     def fetch_candidate_issues do
       send(self(), :fetch_candidate_issues_called)
       {:ok, [:candidate]}
     end
 
+    @doc false
     def fetch_issues_by_states(states) do
       send(self(), {:fetch_issues_by_states_called, states})
       {:ok, states}
     end
 
+    @doc false
     def fetch_issue_states_by_ids(issue_ids) do
       send(self(), {:fetch_issue_states_by_ids_called, issue_ids})
       {:ok, issue_ids}
     end
 
-    def graphql(query, variables) do
-      send(self(), {:graphql_called, query, variables})
+    @doc false
+    def request(path, method, body \\ %{}, _opts \\ []) do
+      send(self(), {:request_called, path, method, body})
 
-      case Process.get({__MODULE__, :graphql_results}) do
+      case Process.get({__MODULE__, :request_results}) do
         [result | rest] ->
-          Process.put({__MODULE__, :graphql_results}, rest)
+          Process.put({__MODULE__, :request_results}, rest)
           result
 
         _ ->
-          Process.get({__MODULE__, :graphql_result})
+          Process.get({__MODULE__, :request_result}) || {:error, :no_request_result_seeded}
       end
     end
   end
@@ -217,106 +221,54 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert {:ok, ["issue-1"]} = Adapter.fetch_issue_states_by_ids(["issue-1"])
     assert_receive {:fetch_issue_states_by_ids_called, ["issue-1"]}
 
-    Process.put(
-      {FakeTeambitionClient, :graphql_result},
-      {:ok, %{"data" => %{"commentCreate" => %{"success" => true}}}}
-    )
-
+    # ----- create_comment success path -----
+    Process.put({FakeTeambitionClient, :request_result}, {:ok, %{"result" => %{"_id" => "c1"}}})
     assert :ok = Adapter.create_comment("issue-1", "hello")
-    assert_receive {:graphql_called, create_comment_query, %{body: "hello", issueId: "issue-1"}}
-    assert create_comment_query =~ "commentCreate"
+    assert_receive {:request_called, "/v3/task/issue-1/comment", :post, %{content: "hello"}}
 
-    Process.put(
-      {FakeTeambitionClient, :graphql_result},
-      {:ok, %{"data" => %{"commentCreate" => %{"success" => false}}}}
-    )
-
-    assert {:error, :comment_create_failed} =
-             Adapter.create_comment("issue-1", "broken")
-
-    Process.put({FakeTeambitionClient, :graphql_result}, {:error, :boom})
-
+    # ----- create_comment error path -----
+    Process.put({FakeTeambitionClient, :request_result}, {:error, :boom})
     assert {:error, :boom} = Adapter.create_comment("issue-1", "boom")
 
-    Process.put({FakeTeambitionClient, :graphql_result}, {:ok, %{"data" => %{}}})
-    assert {:error, :comment_create_failed} = Adapter.create_comment("issue-1", "weird")
-
-    Process.put({FakeTeambitionClient, :graphql_result}, :unexpected)
-    assert {:error, :comment_create_failed} = Adapter.create_comment("issue-1", "odd")
-
+    # ----- update_issue_state success path -----
+    # adapter calls: GET /v3/task/<id> -> GET /v3/taskFlowStatus -> POST move-task-flow-status
     Process.put(
-      {FakeTeambitionClient, :graphql_results},
+      {FakeTeambitionClient, :request_results},
       [
-        {:ok,
-         %{
-           "data" => %{
-             "issue" => %{"team" => %{"states" => %{"nodes" => [%{"id" => "state-1"}]}}}
-           }
-         }},
-        {:ok, %{"data" => %{"issueUpdate" => %{"success" => true}}}}
+        {:ok, %{"result" => %{"_projectId" => "proj-1", "_id" => "issue-1"}}},
+        {:ok, %{"result" => [%{"_id" => "tfs-done", "name" => "Done"}]}},
+        {:ok, %{"result" => %{"_id" => "issue-1", "tfsId" => "tfs-done"}}}
       ]
     )
 
     assert :ok = Adapter.update_issue_state("issue-1", "Done")
-    assert_receive {:graphql_called, state_lookup_query, %{issueId: "issue-1", stateName: "Done"}}
-    assert state_lookup_query =~ "states"
+    assert_receive {:request_called, "/v3/task/issue-1", :get, %{}}
+    assert_receive {:request_called, "/v3/taskFlowStatus?projectId=proj-1", :get, %{}}
+    assert_receive {:request_called, "/v3/task/issue-1/move-task-flow-status", :post, %{tfsId: "tfs-done"}}
 
-    assert_receive {:graphql_called, update_issue_query, %{issueId: "issue-1", stateId: "state-1"}}
-
-    assert update_issue_query =~ "issueUpdate"
-
+    # ----- update_issue_state: state not found -----
     Process.put(
-      {FakeTeambitionClient, :graphql_results},
+      {FakeTeambitionClient, :request_results},
       [
-        {:ok,
-         %{
-           "data" => %{
-             "issue" => %{"team" => %{"states" => %{"nodes" => [%{"id" => "state-1"}]}}}
-           }
-         }},
-        {:ok, %{"data" => %{"issueUpdate" => %{"success" => false}}}}
+        {:ok, %{"result" => %{"_projectId" => "proj-1", "_id" => "issue-1"}}},
+        {:ok, %{"result" => [%{"_id" => "tfs-todo", "name" => "Todo"}]}}
       ]
     )
 
-    assert {:error, :issue_update_failed} =
-             Adapter.update_issue_state("issue-1", "Broken")
-
-    Process.put({FakeTeambitionClient, :graphql_results}, [{:error, :boom}])
-
-    assert {:error, :boom} = Adapter.update_issue_state("issue-1", "Boom")
-
-    Process.put({FakeTeambitionClient, :graphql_results}, [{:ok, %{"data" => %{}}}])
     assert {:error, :state_not_found} = Adapter.update_issue_state("issue-1", "Missing")
 
+    # ----- update_issue_state: task missing project -----
     Process.put(
-      {FakeTeambitionClient, :graphql_results},
-      [
-        {:ok,
-         %{
-           "data" => %{
-             "issue" => %{"team" => %{"states" => %{"nodes" => [%{"id" => "state-1"}]}}}
-           }
-         }},
-        {:ok, %{"data" => %{}}}
-      ]
+      {FakeTeambitionClient, :request_results},
+      [{:ok, %{"result" => %{"_id" => "issue-1"}}}]
     )
 
-    assert {:error, :issue_update_failed} = Adapter.update_issue_state("issue-1", "Weird")
+    assert {:error, :teambition_task_missing_project} =
+             Adapter.update_issue_state("issue-1", "Done")
 
-    Process.put(
-      {FakeTeambitionClient, :graphql_results},
-      [
-        {:ok,
-         %{
-           "data" => %{
-             "issue" => %{"team" => %{"states" => %{"nodes" => [%{"id" => "state-1"}]}}}
-           }
-         }},
-        :unexpected
-      ]
-    )
-
-    assert {:error, :issue_update_failed} = Adapter.update_issue_state("issue-1", "Odd")
+    # ----- update_issue_state: upstream error on first hop -----
+    Process.put({FakeTeambitionClient, :request_results}, [{:error, :boom}])
+    assert {:error, :boom} = Adapter.update_issue_state("issue-1", "Boom")
   end
 
   test "phoenix observability api preserves state, issue, and refresh responses" do

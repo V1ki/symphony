@@ -8,31 +8,39 @@ tracker:
   # Tenant header. Resolved at runtime from $TEAMBITION_ORGANIZATION_ID if not set here.
   organization_id: $TEAMBITION_ORGANIZATION_ID
   # Endpoint defaults to https://open.teambition.com/api when kind is teambition.
+  # NOTE: yamerl (Erlang YAML parser used by Symphony) is ASCII-only, so configure
+  # status names in English. Mirror these exact names in your Teambition project's
+  # Task Flow settings (中文项目可在任务流设置中创建对应英文流转节点).
   active_states:
-    - 待处理
-    - 进行中
-    - 复审
-    - 待合并
+    - Todo
+    - In Progress
+    - Review
+    - Merging
   terminal_states:
-    - 已完成
-    - 已关闭
-    - 已取消
+    - Done
+    - Closed
+    - Cancelled
 polling:
-  interval_ms: 30000
+  interval_ms: 5000
 workspace:
   root: ~/code/symphony-workspaces
 hooks:
   after_create: |
-    git clone --depth 1 https://github.com/<your-org>/<your-repo> .
+    git clone --depth 1 https://github.com/openai/symphony .
+    if command -v mise >/dev/null 2>&1; then
+      cd elixir && mise trust && mise exec -- mix deps.get
+    fi
   before_remove: |
     cd elixir && mise exec -- mix workspace.before_remove
 agent:
-  max_concurrent_agents: 5
+  max_concurrent_agents: 10
   max_turns: 20
 codex:
-  command: codex --config 'model="gpt-5.5"' --config model_reasoning_effort=xhigh app-server
+  command: codex --config shell_environment_policy.inherit=all --config 'model="gpt-5.5"' --config model_reasoning_effort=xhigh app-server
   approval_policy: never
   thread_sandbox: workspace-write
+  turn_sandbox_policy:
+    type: workspaceWrite
 ---
 
 You are working on a Teambition task `{{ issue.identifier }}` (id `{{ issue.id }}`).
@@ -42,16 +50,16 @@ Continuation context:
 
 - This is retry attempt #{{ attempt }} because the task is still in an active state.
 - Resume from the current workspace state instead of restarting from scratch.
-- Do not repeat already-completed investigation or validation unless needed.
-- Do not end the turn while the task remains in an active state unless blocked by missing required permissions/secrets.
+- Do not repeat already-completed investigation or validation unless needed for new code changes.
+- Do not end the turn while the task remains in an active state unless you are blocked by missing required permissions/secrets.
 {% endif %}
 
-Task context:
-- Identifier: {{ issue.identifier }}
-- Title: {{ issue.title }}
-- Current status: {{ issue.state }}
-- Labels: {{ issue.labels }}
-- URL: {{ issue.url }}
+Issue context:
+Identifier: {{ issue.identifier }}
+Title: {{ issue.title }}
+Current status: {{ issue.state }}
+Labels: {{ issue.labels }}
+URL: {{ issue.url }}
 
 Description:
 {% if issue.description %}
@@ -60,11 +68,18 @@ Description:
 No description provided.
 {% endif %}
 
-## Tracker tool: `teambition_api`
+Instructions:
 
-You can call Teambition Open API v3 directly through the `teambition_api` dynamic tool.
+1. This is an unattended orchestration session. Never ask a human to perform follow-up actions.
+2. Only stop early for a true blocker (missing required auth/permissions/secrets). If blocked, record it in the workpad and move the task according to workflow.
+3. Final message must report completed actions and blockers only. Do not include "next steps for user".
 
-Examples:
+Work only in the provided repository copy. Do not touch any other path.
+
+## Prerequisite: `teambition_api` tool is available
+
+Symphony injects a client-side `teambition_api` tool into the Codex app-server session.
+Use it for any Teambition Open API v3 call. Examples:
 
 - Read this task in full:
   `teambition_api({"path": "/v3/task/{{ issue.id }}", "method": "GET"})`
@@ -72,21 +87,20 @@ Examples:
   `teambition_api({"path": "/v3/task/{{ issue.id }}/comment", "method": "POST", "body": {"content": "..."}})`
 - Move task status:
   `teambition_api({"path": "/v3/task/{{ issue.id }}/move-task-flow-status", "method": "POST", "body": {"tfsId": "<tfsId>"}})`
-
-If you need a status `tfsId`, fetch the project's task flow statuses first:
+- List task flow statuses for the project:
   `teambition_api({"path": "/v3/taskFlowStatus?projectId=<projectId>", "method": "GET"})`
 
 ## Default posture
 
-1. This is an unattended orchestration session. Never ask a human to perform follow-up actions.
-2. Only stop early for a true blocker (missing required auth/permissions/secrets).
-3. Final message must report completed actions and blockers only — no "next steps for user".
-4. Operate only within the provided repository copy. Do not touch any other path.
+- Start by determining the task's current status, then follow the matching flow.
+- Treat a single persistent Teambition comment as the source of truth for progress (a "workpad" comment).
+- Keep task metadata current (status, checklist, acceptance criteria, links).
+- Operate autonomously end-to-end unless blocked by missing requirements, secrets, or permissions.
 
-## Status map (customize for your team's Teambition workflow)
+## Status map
 
-- `待处理` -> queued; transition to `进行中` before active work.
-- `进行中` -> implementation underway.
-- `复审` -> PR is attached and validated; awaiting human approval.
-- `待合并` -> approved; perform the `land` flow (do not call `gh pr merge` directly).
-- `已完成` / `已关闭` / `已取消` -> terminal; no further action.
+- `Todo` -> queued; transition to `In Progress` before active work.
+- `In Progress` -> implementation actively underway.
+- `Review` -> PR is attached and validated; waiting on human approval.
+- `Merging` -> approved by human; explicitly open and follow `.codex/skills/land/SKILL.md`. Do not call `gh pr merge` directly.
+- `Done` / `Closed` / `Cancelled` -> terminal; no further action required.
