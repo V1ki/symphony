@@ -231,39 +231,38 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert {:error, :boom} = Adapter.create_comment("issue-1", "boom")
 
     # ----- update_issue_state success path -----
-    # adapter calls: GET /v3/task/<id> -> GET /v3/taskFlowStatus -> POST move-task-flow-status
+    # adapter calls:
+    #   GET  /v3/task/<id>/tfs              (lookup status names available for this task)
+    #   PUT  /v3/task/<id>/taskflowstatus   (move to the resolved tfsId)
     Process.put(
       {FakeTeambitionClient, :request_results},
       [
-        {:ok, %{"result" => %{"_projectId" => "proj-1", "_id" => "issue-1"}}},
-        {:ok, %{"result" => [%{"_id" => "tfs-done", "name" => "Done"}]}},
-        {:ok, %{"result" => %{"_id" => "issue-1", "tfsId" => "tfs-done"}}}
+        {:ok, %{"result" => [%{"id" => "tfs-done", "name" => "Done"}]}},
+        {:ok, %{"result" => %{"taskflowstatusId" => "tfs-done"}}}
       ]
     )
 
     assert :ok = Adapter.update_issue_state("issue-1", "Done")
-    assert_receive {:request_called, "/v3/task/issue-1", :get, %{}}
-    assert_receive {:request_called, "/v3/taskFlowStatus?projectId=proj-1", :get, %{}}
-    assert_receive {:request_called, "/v3/task/issue-1/move-task-flow-status", :post, %{tfsId: "tfs-done"}}
+    assert_receive {:request_called, "/v3/task/issue-1/tfs", :get, %{}}
+    assert_receive {:request_called, "/v3/task/issue-1/taskflowstatus", :put, %{taskflowstatusId: "tfs-done", tfsName: "Done"}}
 
     # ----- update_issue_state: state not found -----
     Process.put(
       {FakeTeambitionClient, :request_results},
       [
-        {:ok, %{"result" => %{"_projectId" => "proj-1", "_id" => "issue-1"}}},
-        {:ok, %{"result" => [%{"_id" => "tfs-todo", "name" => "Todo"}]}}
+        {:ok, %{"result" => [%{"id" => "tfs-todo", "name" => "Todo"}]}}
       ]
     )
 
     assert {:error, :state_not_found} = Adapter.update_issue_state("issue-1", "Missing")
 
-    # ----- update_issue_state: task missing project -----
+    # ----- update_issue_state: tfs lookup returns unexpected payload -----
     Process.put(
       {FakeTeambitionClient, :request_results},
-      [{:ok, %{"result" => %{"_id" => "issue-1"}}}]
+      [{:ok, %{"result" => "not a list"}}]
     )
 
-    assert {:error, :teambition_task_missing_project} =
+    assert {:error, :teambition_state_lookup_failed} =
              Adapter.update_issue_state("issue-1", "Done")
 
     # ----- update_issue_state: upstream error on first hop -----
