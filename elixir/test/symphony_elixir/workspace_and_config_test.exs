@@ -3,7 +3,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
   alias Ecto.Changeset
   alias SymphonyElixir.Config.Schema
   alias SymphonyElixir.Config.Schema.{Codex, StringOrMap}
-  alias SymphonyElixir.Linear.Client
+  alias SymphonyElixir.Teambition.Client
 
   test "workspace bootstrap can be implemented in after_create hook" do
     test_root =
@@ -295,7 +295,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert :ok = Workspace.remove_issue_workspaces(nil)
   end
 
-  test "linear issue helpers" do
+  test "tracker issue helpers" do
     issue = %Issue{
       id: "abc",
       labels: ["frontend", "infra"],
@@ -307,7 +307,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     refute issue.assigned_to_worker
   end
 
-  test "linear client normalizes blockers from inverse relations" do
+  test "teambition client normalizes blockers from related tasks" do
     raw_issue = %{
       "id" => "issue-1",
       "identifier" => "MT-1",
@@ -355,7 +355,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert issue.assigned_to_worker
   end
 
-  test "linear client marks explicitly unassigned issues as not routed to worker" do
+  test "teambition client marks explicitly unassigned tasks as not routed to worker" do
     raw_issue = %{
       "id" => "issue-99",
       "identifier" => "MT-99",
@@ -371,7 +371,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     refute issue.assigned_to_worker
   end
 
-  test "linear client pagination merge helper preserves issue ordering" do
+  test "teambition client pagination merge helper preserves task ordering" do
     issue_page_1 = [
       %Issue{id: "issue-1", identifier: "MT-1"},
       %Issue{id: "issue-2", identifier: "MT-2"}
@@ -386,7 +386,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert Enum.map(merged, & &1.identifier) == ["MT-1", "MT-2", "MT-3"]
   end
 
-  test "linear client paginates issue state fetches by id beyond one page" do
+  test "teambition client paginates task state fetches by id beyond one page" do
     issue_ids = Enum.map(1..55, &"issue-#{&1}")
     first_batch_ids = Enum.take(issue_ids, 50)
     second_batch_ids = Enum.drop(issue_ids, 50)
@@ -424,15 +424,15 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert Enum.map(issues, & &1.id) == issue_ids
 
     assert_receive {:fetch_issue_states_page, query, %{ids: ^first_batch_ids, first: 50, relationFirst: 50}}
-    assert query =~ "SymphonyLinearIssuesById"
+    assert query =~ "SymphonyTeambitionTasksById"
 
     assert_receive {:fetch_issue_states_page, ^query, %{ids: ^second_batch_ids, first: 5, relationFirst: 50}}
   end
 
-  test "linear client logs response bodies for non-200 graphql responses" do
+  test "teambition client logs response bodies for non-200 responses" do
     log =
       ExUnit.CaptureLog.capture_log(fn ->
-        assert {:error, {:linear_api_status, 400}} =
+        assert {:error, {:teambition_api_status, 400}} =
                  Client.graphql(
                    "query Viewer { viewer { id } }",
                    %{},
@@ -453,7 +453,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
                  )
       end)
 
-    assert log =~ "Linear GraphQL request failed status=400"
+    assert log =~ "Teambition API request failed status=400"
     assert log =~ ~s(body=%{"errors" => [%{"extensions" => %{"code" => "BAD_USER_INPUT"})
     assert log =~ "Variable \\\"$ids\\\" got invalid value"
   end
@@ -720,9 +720,9 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
   end
 
   test "config reads defaults for optional settings" do
-    previous_linear_api_key = System.get_env("LINEAR_API_KEY")
-    on_exit(fn -> restore_env("LINEAR_API_KEY", previous_linear_api_key) end)
-    System.delete_env("LINEAR_API_KEY")
+    previous_access_token = System.get_env("TEAMBITION_ACCESS_TOKEN")
+    on_exit(fn -> restore_env("TEAMBITION_ACCESS_TOKEN", previous_access_token) end)
+    System.delete_env("TEAMBITION_ACCESS_TOKEN")
 
     write_workflow_file!(Workflow.workflow_file_path(),
       workspace_root: nil,
@@ -738,7 +738,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     )
 
     config = Config.settings!()
-    assert config.tracker.endpoint == "https://api.linear.app/graphql"
+    assert config.tracker.endpoint == "https://open.teambition.com/api"
     assert config.tracker.api_key == nil
     assert config.tracker.project_slug == nil
     assert config.workspace.root == Path.join(System.tmp_dir!(), "symphony_workspaces")
@@ -889,7 +889,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
 
   test "config resolves $VAR references for env-backed secret and path values" do
     workspace_env_var = "SYMP_WORKSPACE_ROOT_#{System.unique_integer([:positive])}"
-    api_key_env_var = "SYMP_LINEAR_API_KEY_#{System.unique_integer([:positive])}"
+    api_key_env_var = "SYMP_TEAMBITION_ACCESS_TOKEN_#{System.unique_integer([:positive])}"
     workspace_root = Path.join("/tmp", "symphony-workspace-root")
     api_key = "resolved-secret"
     codex_bin = Path.join(["~", "bin", "codex"])
@@ -919,7 +919,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
 
   test "config no longer resolves legacy env: references" do
     workspace_env_var = "SYMP_WORKSPACE_ROOT_#{System.unique_integer([:positive])}"
-    api_key_env_var = "SYMP_LINEAR_API_KEY_#{System.unique_integer([:positive])}"
+    api_key_env_var = "SYMP_TEAMBITION_ACCESS_TOKEN_#{System.unique_integer([:positive])}"
     workspace_root = Path.join("/tmp", "symphony-workspace-root")
     api_key = "resolved-secret"
 
@@ -1012,18 +1012,18 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     previous_missing_workspace_env = System.get_env(missing_workspace_env)
     previous_empty_secret_env = System.get_env(empty_secret_env)
     previous_missing_secret_env = System.get_env(missing_secret_env)
-    previous_linear_api_key = System.get_env("LINEAR_API_KEY")
+    previous_access_token = System.get_env("TEAMBITION_ACCESS_TOKEN")
 
     System.delete_env(missing_workspace_env)
     System.put_env(empty_secret_env, "")
     System.delete_env(missing_secret_env)
-    System.put_env("LINEAR_API_KEY", "fallback-linear-token")
+    System.put_env("TEAMBITION_ACCESS_TOKEN", "fallback-teambition-token")
 
     on_exit(fn ->
       restore_env(missing_workspace_env, previous_missing_workspace_env)
       restore_env(empty_secret_env, previous_empty_secret_env)
       restore_env(missing_secret_env, previous_missing_secret_env)
-      restore_env("LINEAR_API_KEY", previous_linear_api_key)
+      restore_env("TEAMBITION_ACCESS_TOKEN", previous_access_token)
     end)
 
     assert {:ok, settings} =
@@ -1046,7 +1046,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
                workspace: %{root: ""}
              })
 
-    assert settings.tracker.api_key == "fallback-linear-token"
+    assert settings.tracker.api_key == "fallback-teambition-token"
     assert settings.workspace.root == Path.join(System.tmp_dir!(), "symphony_workspaces")
   end
 

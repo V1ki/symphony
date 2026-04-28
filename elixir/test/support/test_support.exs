@@ -11,8 +11,8 @@ defmodule SymphonyElixir.TestSupport do
       alias SymphonyElixir.Codex.AppServer
       alias SymphonyElixir.Config
       alias SymphonyElixir.HttpServer
-      alias SymphonyElixir.Linear.Client
-      alias SymphonyElixir.Linear.Issue
+      alias SymphonyElixir.Teambition.Client
+      alias SymphonyElixir.Tracker.Issue
       alias SymphonyElixir.Orchestrator
       alias SymphonyElixir.PromptBuilder
       alias SymphonyElixir.StatusDashboard
@@ -92,8 +92,8 @@ defmodule SymphonyElixir.TestSupport do
     config =
       Keyword.merge(
         [
-          tracker_kind: "linear",
-          tracker_endpoint: "https://api.linear.app/graphql",
+          tracker_kind: "teambition",
+          tracker_endpoint: "https://open.teambition.com/api",
           tracker_api_token: "token",
           tracker_project_slug: "project",
           tracker_assignee: nil,

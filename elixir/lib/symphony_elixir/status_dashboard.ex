@@ -396,7 +396,7 @@ defmodule SymphonyElixir.StatusDashboard do
     project_part =
       case Config.settings!().tracker.project_slug do
         project_slug when is_binary(project_slug) and project_slug != "" ->
-          colorize(linear_project_url(project_slug), @ansi_cyan)
+          colorize(tracker_project_url(project_slug), @ansi_cyan)
 
         _ ->
           colorize("n/a", @ansi_gray)
@@ -427,7 +427,7 @@ defmodule SymphonyElixir.StatusDashboard do
     colorize("│ Next refresh: ", @ansi_bold) <> colorize("n/a", @ansi_gray)
   end
 
-  defp linear_project_url(project_slug), do: "https://linear.app/project/#{project_slug}/issues"
+  defp tracker_project_url(project_slug), do: "https://www.teambition.com/project/#{project_slug}/tasks"
 
   defp dashboard_url do
     dashboard_url(Config.settings!().server.host, Config.server_port(), HttpServer.bound_port())

@@ -46,7 +46,7 @@ defmodule SymphonyElixir.CoreTest do
       tracker_project_slug: nil
     )
 
-    assert {:error, :missing_linear_project_slug} = Config.validate!()
+    assert {:error, :missing_teambition_project_id} = Config.validate!()
 
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_project_slug: "project",
@@ -98,7 +98,7 @@ defmodule SymphonyElixir.CoreTest do
 
     tracker = Map.get(config, "tracker", %{})
     assert is_map(tracker)
-    assert Map.get(tracker, "kind") == "linear"
+    assert Map.get(tracker, "kind") == "teambition"
     assert is_binary(Map.get(tracker, "project_slug"))
     assert is_list(Map.get(tracker, "active_states"))
     assert is_list(Map.get(tracker, "terminal_states"))
@@ -115,12 +115,12 @@ defmodule SymphonyElixir.CoreTest do
     assert Config.workflow_prompt() == prompt
   end
 
-  test "linear api token resolves from LINEAR_API_KEY env var" do
-    previous_linear_api_key = System.get_env("LINEAR_API_KEY")
-    env_api_key = "test-linear-api-key"
+  test "teambition access token resolves from TEAMBITION_ACCESS_TOKEN env var" do
+    previous_access_token = System.get_env("TEAMBITION_ACCESS_TOKEN")
+    env_api_key = "test-teambition-access-token"
 
-    on_exit(fn -> restore_env("LINEAR_API_KEY", previous_linear_api_key) end)
-    System.put_env("LINEAR_API_KEY", env_api_key)
+    on_exit(fn -> restore_env("TEAMBITION_ACCESS_TOKEN", previous_access_token) end)
+    System.put_env("TEAMBITION_ACCESS_TOKEN", env_api_key)
 
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_api_token: nil,
@@ -133,12 +133,12 @@ defmodule SymphonyElixir.CoreTest do
     assert :ok = Config.validate!()
   end
 
-  test "linear assignee resolves from LINEAR_ASSIGNEE env var" do
-    previous_linear_assignee = System.get_env("LINEAR_ASSIGNEE")
+  test "teambition assignee resolves from TEAMBITION_ASSIGNEE env var" do
+    previous_assignee = System.get_env("TEAMBITION_ASSIGNEE")
     env_assignee = "dev@example.com"
 
-    on_exit(fn -> restore_env("LINEAR_ASSIGNEE", previous_linear_assignee) end)
-    System.put_env("LINEAR_ASSIGNEE", env_assignee)
+    on_exit(fn -> restore_env("TEAMBITION_ASSIGNEE", previous_assignee) end)
+    System.put_env("TEAMBITION_ASSIGNEE", env_assignee)
 
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_assignee: nil,
@@ -183,9 +183,9 @@ defmodule SymphonyElixir.CoreTest do
 
   test "workflow load accepts unterminated front matter with an empty prompt" do
     workflow_path = Path.join(Path.dirname(Workflow.workflow_file_path()), "UNTERMINATED_WORKFLOW.md")
-    File.write!(workflow_path, "---\ntracker:\n  kind: linear\n")
+    File.write!(workflow_path, "---\ntracker:\n  kind: teambition\n")
 
-    assert {:ok, %{config: %{"tracker" => %{"kind" => "linear"}}, prompt: "", prompt_template: ""}} =
+    assert {:ok, %{config: %{"tracker" => %{"kind" => "teambition"}}, prompt: "", prompt_template: ""}} =
              Workflow.load(workflow_path)
   end
 
@@ -220,7 +220,7 @@ defmodule SymphonyElixir.CoreTest do
     GenServer.stop(pid)
   end
 
-  test "linear issue state reconciliation fetch with no running issues is a no-op" do
+  test "tracker issue state reconciliation fetch with no running issues is a no-op" do
     assert {:ok, []} = Client.fetch_issue_states_by_ids([])
   end
 
@@ -883,7 +883,7 @@ defmodule SymphonyElixir.CoreTest do
 
     prompt = PromptBuilder.build_prompt(issue)
 
-    assert prompt =~ "You are working on a Linear issue."
+    assert prompt =~ "You are working on a Teambition task."
     assert prompt =~ "Identifier: MT-777"
     assert prompt =~ "Title: Make fallback prompt useful"
     assert prompt =~ "Body:"
@@ -959,7 +959,7 @@ defmodule SymphonyElixir.CoreTest do
 
     prompt = PromptBuilder.build_prompt(issue, attempt: 2)
 
-    assert prompt =~ "You are working on a Linear ticket `MT-616`"
+    assert prompt =~ "You are working on a Teambition task `MT-616`"
     assert prompt =~ "Issue context:"
     assert prompt =~ "Identifier: MT-616"
     assert prompt =~ "Title: Use rich templates for WORKFLOW.md"

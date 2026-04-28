@@ -14,7 +14,7 @@ defmodule SymphonyElixir.LiveE2ETest do
   @docker_compose_file Path.join(@docker_support_dir, "docker-compose.yml")
   @result_file "LIVE_E2E_RESULT.txt"
   @live_e2e_skip_reason if(System.get_env("SYMPHONY_RUN_LIVE_E2E") != "1",
-                          do: "set SYMPHONY_RUN_LIVE_E2E=1 to enable the real Linear/Codex end-to-end test"
+                          do: "set SYMPHONY_RUN_LIVE_E2E=1 to enable the real Teambition/Codex end-to-end test"
                         )
 
   @team_query """
@@ -121,12 +121,12 @@ defmodule SymphonyElixir.LiveE2ETest do
   """
 
   @tag skip: @live_e2e_skip_reason
-  test "creates a real Linear project and issue with a local worker" do
+  test "creates a real Teambition project and task with a local worker" do
     run_live_issue_flow!(:local)
   end
 
   @tag skip: @live_e2e_skip_reason
-  test "creates a real Linear project and issue with an ssh worker" do
+  test "creates a real Teambition project and task with an ssh worker" do
     run_live_issue_flow!(:ssh)
   end
 
@@ -139,7 +139,7 @@ defmodule SymphonyElixir.LiveE2ETest do
         team
 
       _ ->
-        flunk("expected Linear team #{inspect(team_key)} to exist")
+        flunk("expected Teambition team #{inspect(team_key)} to exist")
     end
   end
 
@@ -269,19 +269,19 @@ defmodule SymphonyElixir.LiveE2ETest do
   defp graphql_data!(query, variables) when is_binary(query) and is_map(variables) do
     case Client.graphql(query, variables) do
       {:ok, %{"data" => data, "errors" => errors}} when is_map(data) and is_list(errors) ->
-        flunk("Linear GraphQL returned partial errors: #{inspect(errors)}")
+        flunk("Teambition API returned partial errors: #{inspect(errors)}")
 
       {:ok, %{"errors" => errors}} when is_list(errors) ->
-        flunk("Linear GraphQL failed: #{inspect(errors)}")
+        flunk("Teambition API failed: #{inspect(errors)}")
 
       {:ok, %{"data" => data}} when is_map(data) ->
         data
 
       {:ok, payload} ->
-        flunk("Linear GraphQL returned unexpected payload: #{inspect(payload)}")
+        flunk("Teambition API returned unexpected payload: #{inspect(payload)}")
 
       {:error, reason} ->
-        flunk("Linear GraphQL request failed: #{inspect(reason)}")
+        flunk("Teambition API request failed: #{inspect(reason)}")
     end
   end
 
@@ -323,7 +323,7 @@ defmodule SymphonyElixir.LiveE2ETest do
     project_slug=#{project_slug}
 
     Step 2:
-    You must use the `linear_graphql` tool to query the current issue by `{{ issue.id }}` and read:
+    You must use the `teambition_api` tool to query the current issue by `{{ issue.id }}` and read:
     - existing comments
     - team workflow states
 
@@ -376,15 +376,15 @@ defmodule SymphonyElixir.LiveE2ETest do
     ```
 
     Step 4:
-    Verify all outcomes with one final `linear_graphql` query against `{{ issue.id }}`:
+    Verify all outcomes with one final `teambition_api` query against `{{ issue.id }}`:
     - the exact comment body is present
     - the issue state type is `completed`
 
     Do not ask for approval.
     Stop only after all three conditions are true:
     1. the file exists with the exact contents above
-    2. the Linear comment exists with the exact body above
-    3. the Linear issue is in a completed terminal state
+    2. the Teambition comment exists with the exact body above
+    3. the Teambition task is in a completed terminal state
     """
   end
 
@@ -455,7 +455,7 @@ defmodule SymphonyElixir.LiveE2ETest do
       Workflow.set_workflow_file_path(workflow_file)
 
       write_workflow_file!(workflow_file,
-        tracker_api_token: "$LINEAR_API_KEY",
+        tracker_api_token: "$TEAMBITION_ACCESS_TOKEN",
         tracker_project_slug: "bootstrap",
         workspace_root: worker_setup.workspace_root,
         worker_ssh_hosts: worker_setup.ssh_worker_hosts,
@@ -484,7 +484,7 @@ defmodule SymphonyElixir.LiveE2ETest do
         )
 
       write_workflow_file!(workflow_file,
-        tracker_api_token: "$LINEAR_API_KEY",
+        tracker_api_token: "$TEAMBITION_ACCESS_TOKEN",
         tracker_project_slug: project["slugId"],
         tracker_active_states: active_state_names(team),
         tracker_terminal_states: terminal_states,

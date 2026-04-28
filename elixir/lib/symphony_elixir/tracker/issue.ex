@@ -1,6 +1,10 @@
-defmodule SymphonyElixir.Linear.Issue do
+defmodule SymphonyElixir.Tracker.Issue do
   @moduledoc """
-  Normalized Linear issue representation used by the orchestrator.
+  Normalized tracker task representation used by the orchestrator.
+
+  Adapter-agnostic: Teambition tasks normalize into this struct in
+  `SymphonyElixir.Teambition.Client`. Field names follow tracker-agnostic naming used by prompt templates that reference
+  `issue.identifier`, `issue.url`, etc.
   """
 
   defstruct [
@@ -37,7 +41,5 @@ defmodule SymphonyElixir.Linear.Issue do
         }
 
   @spec label_names(t()) :: [String.t()]
-  def label_names(%__MODULE__{labels: labels}) do
-    labels
-  end
+  def label_names(%__MODULE__{labels: labels}), do: labels
 end

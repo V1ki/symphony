@@ -46,12 +46,14 @@ defmodule SymphonyElixir.Config.Schema do
 
     embedded_schema do
       field(:kind, :string)
-      field(:endpoint, :string, default: "https://api.linear.app/graphql")
+      field(:endpoint, :string, default: "https://open.teambition.com/api")
       field(:api_key, :string)
       field(:project_slug, :string)
       field(:assignee, :string)
       field(:active_states, {:array, :string}, default: ["Todo", "In Progress"])
       field(:terminal_states, {:array, :string}, default: ["Closed", "Cancelled", "Canceled", "Duplicate", "Done"])
+      # Teambition-only: tenant header.
+      field(:organization_id, :string)
     end
 
     @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
@@ -59,7 +61,16 @@ defmodule SymphonyElixir.Config.Schema do
       schema
       |> cast(
         attrs,
-        [:kind, :endpoint, :api_key, :project_slug, :assignee, :active_states, :terminal_states],
+        [
+          :kind,
+          :endpoint,
+          :api_key,
+          :project_slug,
+          :assignee,
+          :active_states,
+          :terminal_states,
+          :organization_id
+        ],
         empty_values: []
       )
     end
@@ -366,10 +377,31 @@ defmodule SymphonyElixir.Config.Schema do
   end
 
   defp finalize_settings(settings) do
+    endpoint =
+      case settings.tracker.endpoint do
+        nil -> "https://open.teambition.com/api"
+        "" -> "https://open.teambition.com/api"
+        v -> v
+      end
+
     tracker = %{
       settings.tracker
-      | api_key: resolve_secret_setting(settings.tracker.api_key, System.get_env("LINEAR_API_KEY")),
-        assignee: resolve_secret_setting(settings.tracker.assignee, System.get_env("LINEAR_ASSIGNEE"))
+      | api_key:
+          resolve_secret_setting(
+            settings.tracker.api_key,
+            System.get_env("TEAMBITION_ACCESS_TOKEN")
+          ),
+        assignee:
+          resolve_secret_setting(
+            settings.tracker.assignee,
+            System.get_env("TEAMBITION_ASSIGNEE")
+          ),
+        endpoint: endpoint,
+        organization_id:
+          resolve_secret_setting(
+            Map.get(settings.tracker, :organization_id),
+            System.get_env("TEAMBITION_ORGANIZATION_ID")
+          )
     }
 
     workspace = %{

@@ -4,12 +4,12 @@ defmodule SymphonyElixir.ExtensionsTest do
   import Phoenix.ConnTest
   import Phoenix.LiveViewTest
 
-  alias SymphonyElixir.Linear.Adapter
+  alias SymphonyElixir.Teambition.Adapter
   alias SymphonyElixir.Tracker.Memory
 
   @endpoint SymphonyElixirWeb.Endpoint
 
-  defmodule FakeLinearClient do
+  defmodule FakeTeambitionClient do
     def fetch_candidate_issues do
       send(self(), :fetch_candidate_issues_called)
       {:ok, [:candidate]}
@@ -78,13 +78,13 @@ defmodule SymphonyElixir.ExtensionsTest do
   end
 
   setup do
-    linear_client_module = Application.get_env(:symphony_elixir, :linear_client_module)
+    teambition_client_module = Application.get_env(:symphony_elixir, :teambition_client_module)
 
     on_exit(fn ->
-      if is_nil(linear_client_module) do
-        Application.delete_env(:symphony_elixir, :linear_client_module)
+      if is_nil(teambition_client_module) do
+        Application.delete_env(:symphony_elixir, :teambition_client_module)
       else
-        Application.put_env(:symphony_elixir, :linear_client_module, linear_client_module)
+        Application.put_env(:symphony_elixir, :teambition_client_module, teambition_client_module)
       end
     end)
 
@@ -181,7 +181,7 @@ defmodule SymphonyElixir.ExtensionsTest do
     WorkflowStore.force_reload()
   end
 
-  test "tracker delegates to memory and linear adapters" do
+  test "tracker delegates to memory and teambition adapters" do
     issue = %Issue{id: "issue-1", identifier: "MT-1", state: "In Progress"}
     Application.put_env(:symphony_elixir, :memory_tracker_issues, [issue, %{id: "ignored"}])
     Application.put_env(:symphony_elixir, :memory_tracker_recipient, self())
@@ -201,12 +201,12 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert :ok = Memory.create_comment("issue-1", "quiet")
     assert :ok = Memory.update_issue_state("issue-1", "Quiet")
 
-    write_workflow_file!(Workflow.workflow_file_path(), tracker_kind: "linear")
+    write_workflow_file!(Workflow.workflow_file_path(), tracker_kind: "teambition")
     assert SymphonyElixir.Tracker.adapter() == Adapter
   end
 
-  test "linear adapter delegates reads and validates mutation responses" do
-    Application.put_env(:symphony_elixir, :linear_client_module, FakeLinearClient)
+  test "teambition adapter delegates reads and validates mutation responses" do
+    Application.put_env(:symphony_elixir, :teambition_client_module, FakeTeambitionClient)
 
     assert {:ok, [:candidate]} = Adapter.fetch_candidate_issues()
     assert_receive :fetch_candidate_issues_called
@@ -218,7 +218,7 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert_receive {:fetch_issue_states_by_ids_called, ["issue-1"]}
 
     Process.put(
-      {FakeLinearClient, :graphql_result},
+      {FakeTeambitionClient, :graphql_result},
       {:ok, %{"data" => %{"commentCreate" => %{"success" => true}}}}
     )
 
@@ -227,25 +227,25 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert create_comment_query =~ "commentCreate"
 
     Process.put(
-      {FakeLinearClient, :graphql_result},
+      {FakeTeambitionClient, :graphql_result},
       {:ok, %{"data" => %{"commentCreate" => %{"success" => false}}}}
     )
 
     assert {:error, :comment_create_failed} =
              Adapter.create_comment("issue-1", "broken")
 
-    Process.put({FakeLinearClient, :graphql_result}, {:error, :boom})
+    Process.put({FakeTeambitionClient, :graphql_result}, {:error, :boom})
 
     assert {:error, :boom} = Adapter.create_comment("issue-1", "boom")
 
-    Process.put({FakeLinearClient, :graphql_result}, {:ok, %{"data" => %{}}})
+    Process.put({FakeTeambitionClient, :graphql_result}, {:ok, %{"data" => %{}}})
     assert {:error, :comment_create_failed} = Adapter.create_comment("issue-1", "weird")
 
-    Process.put({FakeLinearClient, :graphql_result}, :unexpected)
+    Process.put({FakeTeambitionClient, :graphql_result}, :unexpected)
     assert {:error, :comment_create_failed} = Adapter.create_comment("issue-1", "odd")
 
     Process.put(
-      {FakeLinearClient, :graphql_results},
+      {FakeTeambitionClient, :graphql_results},
       [
         {:ok,
          %{
@@ -266,7 +266,7 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert update_issue_query =~ "issueUpdate"
 
     Process.put(
-      {FakeLinearClient, :graphql_results},
+      {FakeTeambitionClient, :graphql_results},
       [
         {:ok,
          %{
@@ -281,15 +281,15 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert {:error, :issue_update_failed} =
              Adapter.update_issue_state("issue-1", "Broken")
 
-    Process.put({FakeLinearClient, :graphql_results}, [{:error, :boom}])
+    Process.put({FakeTeambitionClient, :graphql_results}, [{:error, :boom}])
 
     assert {:error, :boom} = Adapter.update_issue_state("issue-1", "Boom")
 
-    Process.put({FakeLinearClient, :graphql_results}, [{:ok, %{"data" => %{}}}])
+    Process.put({FakeTeambitionClient, :graphql_results}, [{:ok, %{"data" => %{}}}])
     assert {:error, :state_not_found} = Adapter.update_issue_state("issue-1", "Missing")
 
     Process.put(
-      {FakeLinearClient, :graphql_results},
+      {FakeTeambitionClient, :graphql_results},
       [
         {:ok,
          %{
@@ -304,7 +304,7 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert {:error, :issue_update_failed} = Adapter.update_issue_state("issue-1", "Weird")
 
     Process.put(
-      {FakeLinearClient, :graphql_results},
+      {FakeTeambitionClient, :graphql_results},
       [
         {:ok,
          %{

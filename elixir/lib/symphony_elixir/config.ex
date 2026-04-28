@@ -7,7 +7,7 @@ defmodule SymphonyElixir.Config do
   alias SymphonyElixir.Workflow
 
   @default_prompt_template """
-  You are working on a Linear issue.
+  You are working on a Teambition task.
 
   Identifier: {{ issue.identifier }}
   Title: {{ issue.title }}
@@ -119,14 +119,14 @@ defmodule SymphonyElixir.Config do
       is_nil(settings.tracker.kind) ->
         {:error, :missing_tracker_kind}
 
-      settings.tracker.kind not in ["linear", "memory"] ->
+      settings.tracker.kind not in ["teambition", "memory"] ->
         {:error, {:unsupported_tracker_kind, settings.tracker.kind}}
 
-      settings.tracker.kind == "linear" and not is_binary(settings.tracker.api_key) ->
-        {:error, :missing_linear_api_token}
+      settings.tracker.kind == "teambition" and not is_binary(settings.tracker.api_key) ->
+        {:error, :missing_teambition_access_token}
 
-      settings.tracker.kind == "linear" and not is_binary(settings.tracker.project_slug) ->
-        {:error, :missing_linear_project_slug}
+      settings.tracker.kind == "teambition" and not is_binary(settings.tracker.project_slug) ->
+        {:error, :missing_teambition_project_id}
 
       true ->
         :ok
