@@ -19,7 +19,10 @@ defmodule SymphonyElixir.RepoSettings do
 
   @spec issue_repo_url(String.t() | nil, String.t() | nil) :: String.t() | nil
   def issue_repo_url(issue_identifier, fallback) do
-    issue_override(issue_identifier) || normalize_repo_url(fallback)
+    issue_override(issue_identifier) ||
+      normalize_repo_url(fallback) ||
+      default_repo_url() ||
+      global_default_repo_url()
   end
 
   @spec put_default_repo_url(String.t() | nil) :: String.t() | nil

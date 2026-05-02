@@ -1,4 +1,8 @@
 ---
+# Default git URL used when an issue has no Repo: line in description and
+# no /settings UI override. Hook below auto-clones this when ISSUE_REPO_URL
+# is set; falls back to local rsync only if everything is empty.
+default_repo_url: "https://github.com/V1ki/symphony.git"
 tracker:
   kind: teambition
   # Teambition project _id (from the project URL path /project/<projectId>)
