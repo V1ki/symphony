@@ -117,4 +117,70 @@ defmodule SymphonyElixir.SessionHistoryTest do
 
     assert parse_error =~ "DecodeError"
   end
+
+  test "pairs function calls with their matching outputs" do
+    call = %{
+      timestamp: ~U[2026-05-01 10:00:00Z],
+      type: "response_item",
+      payload: %{"type" => "function_call", "name" => "exec_command", "arguments" => ~s({"cmd":"mix test"}), "call_id" => "call-1"}
+    }
+
+    output = %{
+      timestamp: ~U[2026-05-01 10:00:02Z],
+      type: "response_item",
+      payload: %{"type" => "function_call_output", "call_id" => "call-1", "output" => "ok\n"}
+    }
+
+    user_message = %{
+      timestamp: ~U[2026-05-01 09:59:59Z],
+      type: "response_item",
+      payload: %{"type" => "message", "role" => "user", "content" => "run tests"}
+    }
+
+    assert [
+             ^user_message,
+             %{
+               type: "logical_function_call",
+               payload: %{
+                 "type" => "function_call_pair",
+                 "name" => "exec_command",
+                 "call_id" => "call-1",
+                 "arguments" => ~s({"cmd":"mix test"}),
+                 "output" => "ok\n",
+                 "duration_ms" => 2000
+               }
+             }
+           ] = SessionHistory.pair_calls_with_outputs([user_message, call, output])
+  end
+
+  test "parses apply_patch add update and delete blocks" do
+    patch = """
+    *** Begin Patch
+    *** Add File: lib/new.ex
+    +defmodule New do
+    +end
+    *** Update File: lib/existing.ex
+    @@
+    -old
+    +new
+     keep
+    *** Delete File: lib/old.ex
+    *** End Patch
+    """
+
+    assert [
+             %{op: :add, path: "lib/new.ex", hunks: [%{lines: [%{kind: :add, text: "defmodule New do"}, %{kind: :add, text: "end"}]}]},
+             %{
+               op: :update,
+               path: "lib/existing.ex",
+               hunks: [
+                 %{
+                   search: [%{kind: :remove, text: "old"}, %{kind: :context, text: "keep"}],
+                   replace: [%{kind: :add, text: "new"}, %{kind: :context, text: "keep"}]
+                 }
+               ]
+             },
+             %{op: :delete, path: "lib/old.ex"}
+           ] = SessionHistory.parse_apply_patch(patch)
+  end
 end

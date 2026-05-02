@@ -97,6 +97,48 @@ defmodule SymphonyElixir.SessionHistory do
     :ok
   end
 
+  @spec pair_calls_with_outputs([event()]) :: [event()]
+  def pair_calls_with_outputs(events) when is_list(events) do
+    indexed = Enum.with_index(events)
+
+    outputs_by_call_id =
+      indexed
+      |> Enum.filter(fn {event, _index} -> function_call_output_event?(event) end)
+      |> Enum.group_by(fn {event, _index} -> call_id(function_call_payload(event)) end)
+      |> Map.delete(nil)
+
+    {paired, _outputs, _skipped_output_indexes} =
+      Enum.reduce(indexed, {[], outputs_by_call_id, MapSet.new()}, fn {event, index},
+                                                                       {acc, outputs, skipped} ->
+        cond do
+          function_call_event?(event) ->
+            id = call_id(function_call_payload(event))
+            {output_entry, outputs} = pop_output(outputs, id)
+            output_index = output_entry && elem(output_entry, 1)
+            skipped = if output_index, do: MapSet.put(skipped, output_index), else: skipped
+            {[merge_call_output(event, output_entry) | acc], outputs, skipped}
+
+          function_call_output_event?(event) and MapSet.member?(skipped, index) ->
+            {acc, outputs, skipped}
+
+          true ->
+            {[event | acc], outputs, skipped}
+        end
+      end)
+
+    Enum.reverse(paired)
+  end
+
+  @spec parse_apply_patch(String.t()) :: [map()]
+  def parse_apply_patch(input) when is_binary(input) do
+    input
+    |> String.split("\n", trim: false)
+    |> Enum.reduce(%{patches: [], current: nil}, &parse_patch_line/2)
+    |> finish_patch()
+  end
+
+  def parse_apply_patch(_input), do: []
+
   defp session_root(opts) do
     Keyword.get(opts, :sessions_root) ||
       Application.get_env(:symphony_elixir, :codex_sessions_root) ||
@@ -345,6 +387,181 @@ defmodule SymphonyElixir.SessionHistory do
   end
 
   defp absorb_tool_call(acc, _type, _payload), do: acc
+
+  defp function_call_event?(%{type: "response_item"} = event) do
+    match?(%{"type" => "function_call"}, function_call_payload(event))
+  end
+
+  defp function_call_event?(%{type: "custom_tool_call"}), do: true
+  defp function_call_event?(%{payload: %{"type" => "custom_tool_call"}}), do: true
+  defp function_call_event?(_event), do: false
+
+  defp function_call_output_event?(%{type: "response_item"} = event) do
+    match?(%{"type" => "function_call_output"}, function_call_payload(event))
+  end
+
+  defp function_call_output_event?(_event), do: false
+
+  defp function_call_payload(%{type: "response_item", payload: payload}), do: response_item_payload(payload)
+  defp function_call_payload(%{payload: payload}), do: normalize_payload(payload)
+  defp function_call_payload(_event), do: %{}
+
+  defp call_id(%{"call_id" => id}) when is_binary(id), do: id
+  defp call_id(_payload), do: nil
+
+  defp pop_output(outputs, id) when is_binary(id) do
+    case Map.get(outputs, id, []) do
+      [output | rest] -> {output, Map.put(outputs, id, rest)}
+      [] -> {nil, outputs}
+    end
+  end
+
+  defp pop_output(outputs, _id), do: {nil, outputs}
+
+  defp merge_call_output(call_event, nil) do
+    call_payload = function_call_payload(call_event)
+
+    %{
+      call_event
+      | type: "logical_function_call",
+        payload: logical_call_payload(call_event, call_payload, nil)
+    }
+  end
+
+  defp merge_call_output(call_event, {output_event, _index}) do
+    call_payload = function_call_payload(call_event)
+    output_payload = function_call_payload(output_event)
+
+    %{
+      call_event
+      | type: "logical_function_call",
+        payload: logical_call_payload(call_event, call_payload, output_event)
+    }
+    |> put_in([:payload, "output_payload"], output_payload)
+    |> put_in([:payload, "output"], output_payload["output"])
+    |> put_in([:payload, "output_timestamp"], output_event.timestamp)
+    |> put_in([:payload, "duration_ms"], call_output_duration(call_event.timestamp, output_event.timestamp))
+  end
+
+  defp logical_call_payload(call_event, call_payload, _output_event) do
+    call_name = call_payload["name"] || call_payload["tool_name"] || call_event.type
+
+    %{
+      "type" => "function_call_pair",
+      "call_type" => call_payload["type"] || call_event.type,
+      "call_id" => call_payload["call_id"],
+      "name" => call_name,
+      "arguments" => call_payload["arguments"],
+      "input" => call_payload["input"],
+      "call_payload" => call_payload,
+      "output" => nil,
+      "output_payload" => nil,
+      "output_timestamp" => nil,
+      "duration_ms" => nil
+    }
+  end
+
+  defp call_output_duration(%DateTime{} = call_at, %DateTime{} = output_at) do
+    DateTime.diff(output_at, call_at, :millisecond)
+  end
+
+  defp call_output_duration(_call_at, _output_at), do: nil
+
+  defp parse_patch_line("*** Begin Patch" <> _rest, acc), do: acc
+  defp parse_patch_line("*** End Patch" <> _rest, acc), do: finish_current_patch(acc)
+  defp parse_patch_line("*** End of File" <> _rest, acc), do: acc
+
+  defp parse_patch_line("*** Add File: " <> path, acc) do
+    start_patch(acc, %{op: :add, path: String.trim(path), hunks: [%{lines: []}]})
+  end
+
+  defp parse_patch_line("*** Update File: " <> path, acc) do
+    start_patch(acc, %{op: :update, path: String.trim(path), hunks: []})
+  end
+
+  defp parse_patch_line("*** Delete File: " <> path, acc) do
+    start_patch(acc, %{op: :delete, path: String.trim(path), hunks: []})
+  end
+
+  defp parse_patch_line("@@" <> rest, %{current: %{op: :update} = current} = acc) do
+    hunk = %{header: String.trim("@@" <> rest), lines: [], search: [], replace: []}
+    %{acc | current: %{current | hunks: current.hunks ++ [hunk]}}
+  end
+
+  defp parse_patch_line(line, %{current: %{op: :add} = current} = acc) do
+    hunk = current.hunks |> List.first() |> Map.update!(:lines, &(&1 ++ [diff_line(line, :add)]))
+    %{acc | current: %{current | hunks: [hunk]}}
+  end
+
+  defp parse_patch_line(line, %{current: %{op: :update} = current} = acc) do
+    current = ensure_update_hunk(current)
+    {hunks, [hunk]} = Enum.split(current.hunks, -1)
+    %{acc | current: %{current | hunks: hunks ++ [add_update_diff_line(hunk, line)]}}
+  end
+
+  defp parse_patch_line(line, %{current: %{op: :delete} = current} = acc) do
+    hunk = %{lines: [diff_line(line, :remove)]}
+    %{acc | current: %{current | hunks: current.hunks ++ [hunk]}}
+  end
+
+  defp parse_patch_line(_line, acc), do: acc
+
+  defp start_patch(acc, patch) do
+    acc
+    |> finish_current_patch()
+    |> Map.put(:current, patch)
+  end
+
+  defp finish_patch(acc) do
+    acc
+    |> finish_current_patch()
+    |> Map.fetch!(:patches)
+  end
+
+  defp finish_current_patch(%{current: nil} = acc), do: acc
+
+  defp finish_current_patch(%{patches: patches, current: current} = acc) do
+    %{acc | patches: patches ++ [current], current: nil}
+  end
+
+  defp ensure_update_hunk(%{hunks: []} = current) do
+    %{current | hunks: [%{header: nil, lines: [], search: [], replace: []}]}
+  end
+
+  defp ensure_update_hunk(current), do: current
+
+  defp add_update_diff_line(hunk, line) do
+    diff = diff_line(line, classify_diff_line(line))
+
+    hunk
+    |> Map.update!(:lines, &(&1 ++ [diff]))
+    |> Map.update!(:search, &add_search_line(&1, diff))
+    |> Map.update!(:replace, &add_replace_line(&1, diff))
+  end
+
+  defp add_search_line(lines, %{kind: :add}), do: lines
+  defp add_search_line(lines, %{kind: :remove} = line), do: lines ++ [line]
+  defp add_search_line(lines, line), do: lines ++ [line]
+
+  defp add_replace_line(lines, %{kind: :remove}), do: lines
+  defp add_replace_line(lines, %{kind: :add} = line), do: lines ++ [line]
+  defp add_replace_line(lines, line), do: lines ++ [line]
+
+  defp classify_diff_line("-" <> _line), do: :remove
+  defp classify_diff_line("+" <> _line), do: :add
+  defp classify_diff_line(_line), do: :context
+
+  defp diff_line(line, fallback_kind) do
+    {kind, text} =
+      case line do
+        "+" <> text -> {:add, text}
+        "-" <> text -> {:remove, text}
+        " " <> text -> {:context, text}
+        text -> {fallback_kind, text}
+      end
+
+    %{kind: kind, text: text}
+  end
 
   defp summary_from_list_parse(parsed, path, stat) do
     meta = parsed.meta || %{}
