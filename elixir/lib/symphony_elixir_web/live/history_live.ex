@@ -325,9 +325,9 @@ defmodule SymphonyElixirWeb.HistoryLive do
 
     ~H"""
     <div class={["message-card", "message-card-#{@role}"]}>
-      <.copy_button text={@text} />
+      <.copy_ghost text={@text} />
       <%= if @role == "user" and long_text?(@text) do %>
-        <details class="long-text">
+        <details class="long-text long-text-collapsed">
           <summary><span><%= text_preview(@text) %></span><b>Show more</b></summary>
           <div class="message-body markdown-body"><%= HTML.raw(@markdown) %></div>
         </details>
@@ -375,31 +375,49 @@ defmodule SymphonyElixirWeb.HistoryLive do
           <span class="tool-icon">patch</span>
           apply_patch · <%= @summary %> · <%= format_duration(@payload["duration_ms"]) %> · <%= @output_stats %>
         </span>
-        <.copy_button text={@input} />
+        <.copy_ghost text={@input} />
       </summary>
 
       <div class="patch-list">
-        <section :for={patch <- @patches} class="patch-block">
+        <section :for={patch <- @patches} class={["patch-block", "patch-#{patch.op}"]}>
           <div class="patch-title">
-            <span class={["patch-op", "patch-op-#{patch.op}"]}><%= patch.op %></span>
+            <span class="patch-op"><%= patch.op %></span>
             <code><%= patch.path %></code>
-            <a :if={file_url(@workspace, patch.path)} class="subtle-link file-link" href={file_url(@workspace, patch.path)}>在 workspace 打开</a>
+            <span class="patch-stat"><%= patch_stat(patch) %></span>
+            <a :if={file_url(@workspace, patch.path)} class="subtle-link file-link" href={file_url(@workspace, patch.path)}>open</a>
+            <.copy_ghost text={"#{patch.op} #{patch.path}"} />
           </div>
 
-          <%= if patch.op == :delete do %>
-            <span class="deleted-badge">deleted</span>
-          <% else %>
-            <details :for={hunk <- patch.hunks} class="patch-hunk" open={patch.op == :update}>
-              <summary><%= hunk_label(patch.op, hunk) %></summary>
-              <%= if patch.op == :update do %>
-                <div class="diff-columns">
-                  <pre><%= diff_lines(hunk.search) %></pre>
-                  <pre><%= diff_lines(hunk.replace) %></pre>
+          <%= cond do %>
+            <% patch.op == :delete -> %>
+              <div class="patch-body">
+                <div class="diff-line diff-del"><span class="diff-lineno">—</span><span>deleted</span></div>
+              </div>
+            <% patch.op == :add -> %>
+              <div class="patch-body">
+                <%= for {line, idx} <- patch_add_lines(patch) do %>
+                  <div class="diff-line diff-add"><span class="diff-lineno"><%= idx %></span><span><%= line.text %></span></div>
+                <% end %>
+              </div>
+            <% patch.op == :update -> %>
+              <div :for={hunk <- patch.hunks} class="patch-hunks">
+                <div class="patch-hunk-side">
+                  <h4>Before</h4>
+                  <div :for={line <- hunk.search} class={["diff-line", diff_line_class(line)]}>
+                    <span class="diff-lineno"></span>
+                    <span><%= line.text %></span>
+                  </div>
                 </div>
-              <% else %>
-                <pre class="diff-add"><%= diff_lines(hunk.lines) %></pre>
-              <% end %>
-            </details>
+                <div class="patch-hunk-side">
+                  <h4>After</h4>
+                  <div :for={line <- hunk.replace} class={["diff-line", diff_line_class(line)]}>
+                    <span class="diff-lineno"></span>
+                    <span><%= line.text %></span>
+                  </div>
+                </div>
+              </div>
+            <% true -> %>
+              <% nil %>
           <% end %>
         </section>
       </div>
@@ -434,14 +452,14 @@ defmodule SymphonyElixirWeb.HistoryLive do
           <span :if={is_nil(@cmd)}>· <%= @args_summary %></span>
           · <%= format_duration(@payload["duration_ms"]) %> · <%= @output_stats %>
         </span>
-        <.copy_button text={@args_text <> "\n\n" <> @output} />
+        <.copy_ghost text={@args_text <> "\n\n" <> @output} />
       </summary>
 
       <div class="call-grid">
         <section>
           <h4>Args</h4>
           <%= if long_text?(@args) do %>
-            <details class="long-text">
+            <details class="long-text long-text-collapsed">
               <summary><span><%= text_preview(@args) %></span><b>Show more</b></summary>
               <pre class="code-panel"><%= @args %></pre>
             </details>
@@ -488,11 +506,50 @@ defmodule SymphonyElixirWeb.HistoryLive do
     """
   end
 
-  defp copy_button(assigns) do
+  defp copy_ghost(assigns) do
     ~H"""
-    <button type="button" class="copy-button" data-copy={@text} onclick="navigator.clipboard.writeText(this.dataset.copy)">copy</button>
+    <button type="button" class="copy-ghost" data-copy={@text} aria-label="copy"
+            onclick="navigator.clipboard.writeText(this.dataset.copy);this.classList.add('copied');setTimeout(()=>this.classList.remove('copied'),900);">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" xmlns="http://www.w3.org/2000/svg">
+        <rect x="4" y="4" width="9" height="11" rx="1.5"/>
+        <path d="M4 4V3a1 1 0 011-1h7a1 1 0 011 1v1" />
+        <path d="M2 6v8a1 1 0 001 1h1" />
+      </svg>
+    </button>
     """
   end
+
+  defp patch_stat(%{op: :add, hunks: [%{lines: lines} | _]}) do
+    "+" <> Integer.to_string(length(lines))
+  end
+
+  defp patch_stat(%{op: :update, hunks: hunks}) do
+    {add, rem} =
+      Enum.reduce(hunks, {0, 0}, fn hunk, {a, r} ->
+        Enum.reduce(hunk.lines, {a, r}, fn
+          %{kind: :add}, {a, r} -> {a + 1, r}
+          %{kind: :remove}, {a, r} -> {a, r + 1}
+          _, acc -> acc
+        end)
+      end)
+
+    "+" <> Integer.to_string(add) <> " -" <> Integer.to_string(rem)
+  end
+
+  defp patch_stat(%{op: :delete}), do: "deleted"
+  defp patch_stat(_), do: ""
+
+  defp patch_add_lines(%{op: :add, hunks: [%{lines: lines} | _]}) do
+    lines
+    |> Enum.with_index(1)
+    |> Enum.map(fn {line, idx} -> {line, idx} end)
+  end
+
+  defp patch_add_lines(_), do: []
+
+  defp diff_line_class(%{kind: :add}), do: "diff-add"
+  defp diff_line_class(%{kind: :remove}), do: "diff-del"
+  defp diff_line_class(_), do: "diff-context"
 
   defp numbered_output(assigns) do
     assigns =
@@ -502,7 +559,7 @@ defmodule SymphonyElixirWeb.HistoryLive do
 
     ~H"""
     <%= if long_text?(@output) do %>
-      <details class="long-text">
+      <details class="long-text long-text-collapsed">
         <summary><span><%= @preview %></span><b>Show more</b></summary>
         <pre class="code-panel output-panel"><%= @numbered %></pre>
       </details>
@@ -660,7 +717,7 @@ defmodule SymphonyElixirWeb.HistoryLive do
     end)
   end
 
-  defp long_text?(text) when is_binary(text), do: String.length(text) > 800
+  defp long_text?(text) when is_binary(text), do: String.length(text) > 200
   defp long_text?(_text), do: false
 
   defp text_preview(text) when is_binary(text) do
@@ -682,24 +739,6 @@ defmodule SymphonyElixirWeb.HistoryLive do
     |> Enum.map(fn patch -> "#{patch.op} #{patch.path}" end)
     |> Enum.join(", ")
     |> one_line(120)
-  end
-
-  defp hunk_label(:update, %{header: header}) when is_binary(header), do: header
-  defp hunk_label(:update, _hunk), do: "update hunk"
-  defp hunk_label(:add, hunk), do: "#{length(hunk.lines)} added lines"
-  defp hunk_label(_op, _hunk), do: "hunk"
-
-  defp diff_lines(lines) when is_list(lines) do
-    Enum.map_join(lines, "\n", fn %{kind: kind, text: text} ->
-      prefix =
-        case kind do
-          :add -> "+"
-          :remove -> "-"
-          _ -> " "
-        end
-
-      prefix <> text
-    end)
   end
 
   defp file_url(workspace, path) when is_binary(workspace) and is_binary(path) do

@@ -18,6 +18,266 @@
   --shadow-lg: 0 20px 50px rgba(15, 23, 42, 0.08);
 }
 
+/* History detail v2 design tokens (SPEC.md). Only applied within
+   `.history-shell` so the live dashboard keeps its existing palette. */
+.history-shell {
+  --history-accent: #EA7A1A;
+  --history-accent-soft: #F8D8BC;
+  --history-surface: #F9F9F7;
+  --history-page-bg: #F6F4EE;
+  --history-text: #1F2933;
+  --history-text-muted: #536273;
+  --history-border: #DED8CA;
+  --history-border-strong: #B9B0A0;
+  --history-diff-add: #E8F5DF;
+  --history-diff-add-text: #275B32;
+  --history-diff-del: #FDE7DF;
+  --history-diff-del-text: #8A3324;
+  --history-focus: #2F5D75;
+  --history-success-minimal: #DCEED8;
+
+  background: var(--history-page-bg);
+  color: var(--history-text);
+}
+
+.history-shell .hero-card,
+.history-shell .section-card,
+.history-shell .metric-card {
+  background: var(--history-surface);
+  border-color: var(--history-border);
+}
+
+.history-shell .eyebrow,
+.history-shell .metric-label,
+.history-shell .metric-detail,
+.history-shell .hero-copy {
+  color: var(--history-text-muted);
+}
+
+/* Ghost copy buttons: invisible by default, revealed on parent hover or
+   when the parent card is selected via keyboard. */
+.history-shell .copy-ghost {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--history-text-muted);
+  border-radius: 8px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+
+.history-shell .copy-ghost:hover {
+  background: var(--history-accent-soft);
+  border-color: var(--history-accent);
+  color: var(--history-accent);
+  opacity: 1;
+}
+
+.history-shell .call-card:hover .copy-ghost,
+.history-shell .call-card.event-selected .copy-ghost,
+.history-shell .copy-ghost:focus-visible,
+.history-shell .message-card:hover .copy-ghost,
+.history-shell .reasoning-card:hover .copy-ghost,
+.history-shell .patch-block:hover .copy-ghost {
+  opacity: 1;
+}
+
+.history-shell .copy-ghost svg {
+  width: 14px;
+  height: 14px;
+  display: block;
+  margin: auto;
+}
+
+/* Long text collapsed — real height clamp with fade mask, not just a class. */
+.history-shell .long-text-collapsed > summary {
+  list-style: none;
+  cursor: pointer;
+  position: relative;
+}
+
+.history-shell .long-text-collapsed > summary::-webkit-details-marker {
+  display: none;
+}
+
+.history-shell .long-text-collapsed:not([open]) > summary {
+  display: block;
+  max-height: 8em;
+  overflow: hidden;
+  position: relative;
+  padding-bottom: 1.6em;
+}
+
+.history-shell .long-text-collapsed:not([open]) > summary::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 2.4em;
+  background: linear-gradient(to bottom, transparent, var(--history-surface) 70%);
+  pointer-events: none;
+}
+
+.history-shell .long-text-collapsed:not([open]) > summary > b {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  background: var(--history-surface);
+  padding: 2px 8px 2px 16px;
+  font-weight: 500;
+  color: var(--history-accent);
+  font-size: 12px;
+}
+
+.history-shell .long-text-collapsed[open] > summary > b {
+  display: inline-block;
+  margin-left: 8px;
+  color: var(--history-text-muted);
+  font-weight: 500;
+  font-size: 12px;
+}
+
+.history-shell .long-text-collapsed[open] > summary > b::before {
+  content: "Collapse · ";
+}
+
+.history-shell .long-text-collapsed[open] > summary > b::after {
+  content: "";
+}
+
+/* Apply_patch — three-state file ops with real diff coloring. */
+.history-shell .patch-block {
+  background: var(--history-surface);
+  border: 1px solid var(--history-border);
+  border-radius: 8px;
+  margin: 8px 0;
+  overflow: hidden;
+}
+
+.history-shell .patch-block.patch-add {
+  border-left: 3px solid var(--history-diff-add-text);
+}
+
+.history-shell .patch-block.patch-update {
+  border-left: 3px solid var(--history-accent);
+}
+
+.history-shell .patch-block.patch-delete {
+  border-left: 3px solid var(--history-diff-del-text);
+}
+
+.history-shell .patch-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: rgba(0, 0, 0, 0.02);
+  border-bottom: 1px solid var(--history-border);
+  font-size: 13px;
+}
+
+.history-shell .patch-op {
+  text-transform: uppercase;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 2px 8px;
+  border-radius: 8px;
+}
+
+.history-shell .patch-add .patch-op {
+  background: var(--history-diff-add);
+  color: var(--history-diff-add-text);
+}
+
+.history-shell .patch-update .patch-op {
+  background: var(--history-accent-soft);
+  color: var(--history-accent);
+}
+
+.history-shell .patch-delete .patch-op {
+  background: var(--history-diff-del);
+  color: var(--history-diff-del-text);
+}
+
+.history-shell .patch-title code {
+  flex: 1;
+  font-size: 12px;
+  color: var(--history-text);
+  background: transparent;
+  padding: 0;
+}
+
+.history-shell .patch-stat {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--history-text-muted);
+}
+
+.history-shell .patch-body {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.history-shell .patch-body .diff-line {
+  display: grid;
+  grid-template-columns: 40px 1fr;
+  gap: 8px;
+  padding: 1px 12px;
+  white-space: pre;
+}
+
+.history-shell .patch-body .diff-line .diff-lineno {
+  color: var(--history-text-muted);
+  text-align: right;
+  user-select: none;
+  opacity: 0.6;
+}
+
+.history-shell .patch-body .diff-add {
+  background: var(--history-diff-add);
+  color: var(--history-diff-add-text);
+}
+
+.history-shell .patch-body .diff-del {
+  background: var(--history-diff-del);
+  color: var(--history-diff-del-text);
+  text-decoration: line-through;
+  text-decoration-color: rgba(138, 51, 36, 0.4);
+}
+
+.history-shell .patch-body .diff-context {
+  color: var(--history-text-muted);
+}
+
+.history-shell .patch-update .patch-hunks {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+  border-top: 1px solid var(--history-border);
+}
+
+.history-shell .patch-update .patch-hunk-side {
+  padding: 8px;
+  border-right: 1px solid var(--history-border);
+}
+
+.history-shell .patch-update .patch-hunk-side:last-child {
+  border-right: 0;
+}
+
+.history-shell .patch-update .patch-hunk-side h4 {
+  margin: 0 0 4px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--history-text-muted);
+}
+
 * {
   box-sizing: border-box;
 }

@@ -389,7 +389,9 @@ defmodule SymphonyElixir.SessionHistory do
   defp absorb_tool_call(acc, _type, _payload), do: acc
 
   defp function_call_event?(%{type: "response_item"} = event) do
-    match?(%{"type" => "function_call"}, function_call_payload(event))
+    payload = function_call_payload(event)
+    match?(%{"type" => "function_call"}, payload) or
+      match?(%{"type" => "custom_tool_call"}, payload)
   end
 
   defp function_call_event?(%{type: "custom_tool_call"}), do: true
