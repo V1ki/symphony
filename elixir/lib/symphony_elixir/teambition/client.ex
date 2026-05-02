@@ -32,6 +32,8 @@ defmodule SymphonyElixir.Teambition.Client do
   alias SymphonyElixir.{Config, Tracker.Issue}
 
   @page_size 50
+  @dependency_line_regex ~r/^\s*(?:Depends on|Blocked by|依赖任务|依赖)[:：]\s*(.+)$/iu
+  @identifier_regex ~r/T-?(\d+)/i
 
   # ---------------------------------------------------------------------------
   # Public API expected by SymphonyElixir.Teambition.Adapter
@@ -44,7 +46,7 @@ defmodule SymphonyElixir.Teambition.Client do
     cond do
       is_nil(tracker.api_key) -> {:error, :missing_teambition_access_token}
       is_nil(tracker.project_slug) -> {:error, :missing_teambition_project_id}
-      true -> do_fetch_by_states(tracker.project_slug, tracker.active_states)
+      true -> do_fetch_by_states(tracker.project_slug, tracker.active_states, resolve_blockers: true)
     end
   end
 
@@ -99,11 +101,24 @@ defmodule SymphonyElixir.Teambition.Client do
   # Internal: fetch candidate / by-states (uses project task search + TQL)
   # ---------------------------------------------------------------------------
 
-  defp do_fetch_by_states(project_id, state_names) do
+  @doc false
+  @spec normalize_task_for_test(map(), map(), [map()]) :: Issue.t()
+  def normalize_task_for_test(task, status_index, tasks) when is_map(task) and is_map(status_index) and is_list(tasks) do
+    task_lookup = build_task_lookup(tasks, status_index)
+    normalize_task(task, status_index, task_lookup)
+  end
+
+  defp do_fetch_by_states(project_id, state_names, opts \\ []) do
     with {:ok, status_index} <- resolve_status_index(project_id),
          tfs_ids = filter_tfs_ids(status_index, state_names),
          {:ok, tasks} <- fetch_project_tasks(project_id, tfs_ids) do
-      {:ok, Enum.map(tasks, &normalize_task(&1, status_index))}
+      issues = normalize_tasks(tasks, status_index)
+
+      if Keyword.get(opts, :resolve_blockers, false) do
+        resolve_issue_blockers(issues)
+      else
+        {:ok, issues}
+      end
     end
   end
 
@@ -115,7 +130,7 @@ defmodule SymphonyElixir.Teambition.Client do
       tasks = by_id ++ by_unique
 
       with {:ok, status_index} <- status_index_for_tasks(tasks) do
-        {:ok, Enum.map(tasks, &normalize_task(&1, status_index))}
+        {:ok, normalize_tasks(tasks, status_index)}
       end
     end
   end
@@ -285,13 +300,33 @@ defmodule SymphonyElixir.Teambition.Client do
   # Normalization: Teambition task -> Symphony's Issue struct
   # ---------------------------------------------------------------------------
 
-  defp normalize_task(task, status_index) when is_map(task) do
-    id = task["id"] || task["_id"]
-    tfs_id = task["tfsId"] || task["taskflowstatusId"]
+  defp normalize_tasks(tasks, status_index) when is_list(tasks) and is_map(status_index) do
+    task_lookup = build_task_lookup(tasks, status_index)
+    Enum.map(tasks, &normalize_task(&1, status_index, task_lookup))
+  end
 
-    state_name =
-      Map.get(status_index, tfs_id) || get_in(task, ["taskflowstatus", "name"]) ||
-        get_in(task, ["tfs", "name"])
+  defp build_task_lookup(tasks, status_index) when is_list(tasks) and is_map(status_index) do
+    Enum.reduce(tasks, %{}, fn task, acc ->
+      identifier = build_identifier(task)
+      id = task["id"] || task["_id"]
+
+      if is_binary(identifier) and identifier != "" do
+        Map.put(acc, identifier, %{
+          id: id,
+          identifier: identifier,
+          state: task_state_name(task, status_index),
+          parent_id: task_parent_id(task),
+          pos: task_pos(task)
+        })
+      else
+        acc
+      end
+    end)
+  end
+
+  defp normalize_task(task, status_index, task_lookup) when is_map(task) and is_map(task_lookup) do
+    id = task["id"] || task["_id"]
+    state_name = task_state_name(task, status_index)
 
     %Issue{
       id: id,
@@ -303,7 +338,7 @@ defmodule SymphonyElixir.Teambition.Client do
       branch_name: nil,
       url: build_url(task),
       assignee_id: task["executorId"],
-      blocked_by: [],
+      blocked_by: extract_blockers(task, task_lookup),
       labels: extract_tag_ids(task),
       assigned_to_worker: assigned_to_worker?(task),
       created_at: parse_dt(task["created"] || task["createdAt"]),
@@ -311,6 +346,13 @@ defmodule SymphonyElixir.Teambition.Client do
       start_date: parse_dt(task["startDate"]),
       due_date: parse_dt(task["dueDate"])
     }
+  end
+
+  defp task_state_name(task, status_index) do
+    tfs_id = task["tfsId"] || task["taskflowstatusId"]
+
+    Map.get(status_index, tfs_id) || get_in(task, ["taskflowstatus", "name"]) ||
+      get_in(task, ["tfs", "name"])
   end
 
   defp build_identifier(task) do
@@ -323,6 +365,156 @@ defmodule SymphonyElixir.Teambition.Client do
 
   defp parse_priority(p) when is_integer(p), do: p
   defp parse_priority(_), do: nil
+
+  defp extract_blockers(task, task_lookup) when is_map(task) and is_map(task_lookup) do
+    identifier = build_identifier(task)
+
+    case explicit_dependency_identifiers(task) do
+      {:explicit, identifiers} ->
+        identifiers
+        |> Enum.reject(&self_dependency?(&1, identifier))
+        |> tap(fn blockers ->
+          log_self_dependency_warning(identifier, identifiers, blockers)
+        end)
+        |> Enum.map(&blocker_from_identifier(&1, task_lookup))
+
+      :none ->
+        sibling_blockers(task, task_lookup)
+    end
+  end
+
+  defp explicit_dependency_identifiers(task) do
+    {seen_dependency_line?, identifiers} =
+      (task["note"] || task["description"] || "")
+      |> to_string()
+      |> String.split(~r/\R/u)
+      |> Enum.reduce({false, []}, fn line, {seen?, acc} ->
+        case Regex.run(@dependency_line_regex, line) do
+          [_, dependency_text] -> {true, acc ++ extract_dependency_identifiers(dependency_text)}
+          _ -> {seen?, acc}
+        end
+      end)
+
+    if seen_dependency_line? do
+      {:explicit, Enum.uniq(identifiers)}
+    else
+      :none
+    end
+  end
+
+  defp extract_dependency_identifiers(dependency_text) when is_binary(dependency_text) do
+    @identifier_regex
+    |> Regex.scan(dependency_text)
+    |> Enum.map(fn [_, number] -> "T-#{number}" end)
+  end
+
+  defp self_dependency?(identifier, identifier), do: true
+  defp self_dependency?(_blocker_identifier, _issue_identifier), do: false
+
+  defp log_self_dependency_warning(issue_identifier, identifiers, blockers) do
+    if length(identifiers) != length(blockers) do
+      Logger.warning("Ignoring self dependency in Teambition task #{issue_identifier}")
+    end
+  end
+
+  defp blocker_from_identifier(identifier, task_lookup) do
+    task_lookup
+    |> Map.get(identifier, %{identifier: identifier, id: nil, state: nil})
+    |> blocker_map()
+  end
+
+  defp sibling_blockers(task, task_lookup) do
+    parent_id = task_parent_id(task)
+    pos = task_pos(task)
+    identifier = build_identifier(task)
+
+    if is_binary(parent_id) and is_number(pos) do
+      task_lookup
+      |> Map.values()
+      |> Enum.filter(fn sibling ->
+        sibling.parent_id == parent_id and is_number(sibling.pos) and sibling.pos < pos and
+          sibling.identifier != identifier
+      end)
+      |> Enum.sort_by(&{&1.pos, &1.identifier})
+      |> Enum.map(&blocker_map/1)
+    else
+      []
+    end
+  end
+
+  defp task_parent_id(task) do
+    task["_parentId"] || task["parentTaskId"] || task["parentId"] || last_ancestor_id(task["ancestorIds"])
+  end
+
+  defp last_ancestor_id(ancestor_ids) when is_list(ancestor_ids) do
+    Enum.find(Enum.reverse(ancestor_ids), &is_binary/1)
+  end
+
+  defp last_ancestor_id(_ancestor_ids), do: nil
+
+  defp task_pos(%{"pos" => pos}) when is_number(pos), do: pos
+
+  defp task_pos(%{"pos" => pos}) when is_binary(pos) do
+    case Float.parse(pos) do
+      {number, ""} -> number
+      _ -> nil
+    end
+  end
+
+  defp task_pos(_task), do: nil
+
+  defp resolve_issue_blockers(issues) when is_list(issues) do
+    identifiers =
+      issues
+      |> Enum.flat_map(& &1.blocked_by)
+      |> Enum.map(&Map.get(&1, :identifier))
+      |> Enum.filter(&is_binary/1)
+      |> Enum.uniq()
+
+    with {:ok, tasks} <- fetch_tasks_by_unique_ids(identifiers),
+         {:ok, status_index} <- status_index_for_tasks(tasks) do
+      fetched_lookup = build_task_lookup(tasks, status_index)
+      issue_lookup = build_issue_lookup(issues)
+      lookup = Map.merge(issue_lookup, fetched_lookup)
+
+      {:ok,
+       Enum.map(issues, fn issue ->
+         %{issue | blocked_by: Enum.map(issue.blocked_by, &resolve_blocker(&1, lookup))}
+       end)}
+    end
+  end
+
+  defp build_issue_lookup(issues) do
+    Enum.reduce(issues, %{}, fn
+      %Issue{id: id, identifier: identifier, state: state}, acc when is_binary(identifier) ->
+        Map.put(acc, identifier, %{id: id, identifier: identifier, state: state})
+
+      _issue, acc ->
+        acc
+    end)
+  end
+
+  defp resolve_blocker(%{identifier: identifier} = blocker, lookup) when is_binary(identifier) do
+    case Map.get(lookup, identifier) do
+      nil ->
+        %{identifier: identifier, id: nil, state: "已废弃"}
+
+      resolved ->
+        resolved
+        |> Map.merge(Map.take(blocker, [:identifier]))
+        |> blocker_map()
+    end
+  end
+
+  defp resolve_blocker(blocker, _lookup), do: blocker_map(blocker)
+
+  defp blocker_map(%{id: id, identifier: identifier, state: state}) do
+    %{id: id, identifier: identifier, state: state}
+  end
+
+  defp blocker_map(%{identifier: identifier}) do
+    %{id: nil, identifier: identifier, state: nil}
+  end
 
   defp parse_dt(nil), do: nil
   defp parse_dt(""), do: nil
