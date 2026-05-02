@@ -71,7 +71,7 @@ defmodule SymphonyElixir.Teambition.Client do
   def fetch_issue_states_by_ids(ids) when is_list(ids) do
     case Enum.uniq(ids) do
       [] -> {:ok, []}
-      uniq -> do_fetch_by_ids(uniq)
+      uniq -> do_fetch_by_ids(uniq, resolve_blockers: true)
     end
   end
 
@@ -122,7 +122,7 @@ defmodule SymphonyElixir.Teambition.Client do
     end
   end
 
-  defp do_fetch_by_ids(ids) do
+  defp do_fetch_by_ids(ids, opts) do
     {task_ids, unique_ids} = split_task_and_unique_ids(ids)
 
     with {:ok, by_id} <- batch_fetch_tasks(task_ids),
@@ -130,7 +130,13 @@ defmodule SymphonyElixir.Teambition.Client do
       tasks = by_id ++ by_unique
 
       with {:ok, status_index} <- status_index_for_tasks(tasks) do
-        {:ok, normalize_tasks(tasks, status_index)}
+        issues = normalize_tasks(tasks, status_index)
+
+        if Keyword.get(opts, :resolve_blockers, false) do
+          resolve_issue_blockers(issues)
+        else
+          {:ok, issues}
+        end
       end
     end
   end
