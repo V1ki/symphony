@@ -43,9 +43,34 @@ defmodule SymphonyElixir.Teambition.Adapter do
     end
   end
 
+  @spec update_issue_dates(String.t(), keyword()) :: :ok | {:error, term()}
+  def update_issue_dates(task_id, opts) when is_binary(task_id) and is_list(opts) do
+    with :ok <- maybe_put_date(task_id, "startdate", Keyword.get(opts, :start_date)),
+         :ok <- maybe_put_date(task_id, "duedate", Keyword.get(opts, :due_date)) do
+      :ok
+    end
+  end
+
   # ---------------------------------------------------------------------------
   # Helpers
   # ---------------------------------------------------------------------------
+
+  defp maybe_put_date(_task_id, _kind, nil), do: :ok
+
+  defp maybe_put_date(task_id, kind, %DateTime{} = dt) do
+    iso = DateTime.to_iso8601(dt)
+
+    body =
+      case kind do
+        "startdate" -> %{startDate: iso}
+        "duedate" -> %{dueDate: iso}
+      end
+
+    case client_module().request("/v3/task/#{task_id}/#{kind}", :put, body) do
+      {:ok, _} -> :ok
+      {:error, _} = err -> err
+    end
+  end
 
   # Use GET /v3/task/{taskId}/tfs to list the workflow statuses available for
   # this task's task flow, then match by name. This avoids needing to know the

@@ -30,6 +30,17 @@ defmodule SymphonyElixir.Tracker do
   def update_issue_state(issue_id, state_name),
     do: adapter().update_issue_state(issue_id, state_name)
 
+  @spec update_issue_dates(String.t(), keyword()) :: :ok | {:error, term()}
+  def update_issue_dates(issue_id, opts) when is_binary(issue_id) and is_list(opts) do
+    tracker_adapter = adapter()
+
+    if function_exported?(tracker_adapter, :update_issue_dates, 2) do
+      apply(tracker_adapter, :update_issue_dates, [issue_id, opts])
+    else
+      :ok
+    end
+  end
+
   @spec adapter() :: module()
   def adapter do
     case Config.settings!().tracker.kind do

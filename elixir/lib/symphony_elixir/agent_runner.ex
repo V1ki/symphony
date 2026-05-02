@@ -32,6 +32,7 @@ defmodule SymphonyElixir.AgentRunner do
     case Workspace.create_for_issue(issue, worker_host) do
       {:ok, workspace} ->
         send_worker_runtime_info(codex_update_recipient, issue, worker_host, workspace)
+        maybe_record_start_date(issue)
 
         try do
           with :ok <- Workspace.run_before_run_hook(workspace, issue, worker_host) do
@@ -121,7 +122,8 @@ defmodule SymphonyElixir.AgentRunner do
 
           :ok
 
-        {:done, _refreshed_issue} ->
+        {:done, refreshed_issue} ->
+          maybe_record_due_date(refreshed_issue)
           :ok
 
         {:error, reason} ->
@@ -162,6 +164,40 @@ defmodule SymphonyElixir.AgentRunner do
   end
 
   defp continue_with_issue?(issue, _issue_state_fetcher), do: {:done, issue}
+
+  defp maybe_record_start_date(%Issue{id: id, start_date: nil}) when is_binary(id) do
+    case update_issue_dates_safely(id, start_date: DateTime.utc_now()) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("Failed to record start_date for issue_id=#{id}: #{inspect(reason)}")
+        :ok
+    end
+  end
+
+  defp maybe_record_start_date(_issue), do: :ok
+
+  defp maybe_record_due_date(%Issue{id: id, due_date: nil}) when is_binary(id) do
+    case update_issue_dates_safely(id, due_date: DateTime.utc_now()) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("Failed to record due_date for issue_id=#{id}: #{inspect(reason)}")
+        :ok
+    end
+  end
+
+  defp maybe_record_due_date(_issue), do: :ok
+
+  defp update_issue_dates_safely(id, opts) do
+    Tracker.update_issue_dates(id, opts)
+  rescue
+    exception -> {:error, exception}
+  catch
+    kind, reason -> {:error, {kind, reason}}
+  end
 
   defp active_issue_state?(state_name) when is_binary(state_name) do
     normalized_state = normalize_issue_state(state_name)

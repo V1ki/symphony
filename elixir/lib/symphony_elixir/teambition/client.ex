@@ -108,10 +108,28 @@ defmodule SymphonyElixir.Teambition.Client do
   end
 
   defp do_fetch_by_ids(ids) do
-    case batch_fetch_tasks(ids) do
-      {:ok, tasks} -> {:ok, Enum.map(tasks, &normalize_task(&1, %{}))}
-      err -> err
+    with {:ok, tasks} <- batch_fetch_tasks(ids),
+         {:ok, status_index} <- status_index_for_tasks(tasks) do
+      {:ok, Enum.map(tasks, &normalize_task(&1, status_index))}
     end
+  end
+
+  # Build a tfsId -> name map covering every project that the supplied tasks
+  # belong to. We resolve project status lists once per project to keep this
+  # call O(projects) rather than O(tasks).
+  defp status_index_for_tasks(tasks) do
+    project_ids =
+      tasks
+      |> Enum.map(fn t -> t["projectId"] || t["_projectId"] end)
+      |> Enum.filter(&is_binary/1)
+      |> Enum.uniq()
+
+    Enum.reduce_while(project_ids, {:ok, %{}}, fn pid, {:ok, acc} ->
+      case resolve_status_index(pid) do
+        {:ok, idx} -> {:cont, {:ok, Map.merge(acc, idx)}}
+        {:error, _} = err -> {:halt, err}
+      end
+    end)
   end
 
   # GET /v3/project/{projectId}/task/query?q=<TQL>&pageSize=&pageToken=
@@ -130,6 +148,8 @@ defmodule SymphonyElixir.Teambition.Client do
   end
 
   # GET /v3/task/query?taskId=id1,id2 (batched in chunks of @page_size)
+  defp batch_fetch_tasks([]), do: {:ok, []}
+
   defp batch_fetch_tasks(ids) do
     ids
     |> Enum.chunk_every(@page_size)
@@ -144,6 +164,61 @@ defmodule SymphonyElixir.Teambition.Client do
       end
     end)
   end
+
+  defp fetch_tasks_by_unique_ids([]), do: {:ok, []}
+
+  defp fetch_tasks_by_unique_ids(unique_ids) do
+    tracker = Config.settings!().tracker
+
+    if is_nil(tracker.project_slug) do
+      {:ok, []}
+    else
+      unique_ids
+      |> Enum.reduce_while({:ok, []}, fn unique_id, {:ok, acc} ->
+        tql = "uniqueId = #{unique_id}"
+
+        case paginate("/v3/project/#{tracker.project_slug}/task/query", %{q: tql, pageSize: @page_size}, []) do
+          {:ok, list} -> {:cont, {:ok, acc ++ list}}
+          {:error, _} = err -> {:halt, err}
+        end
+      end)
+    end
+  end
+
+  defp split_task_and_unique_ids(ids) do
+    Enum.reduce(ids, {[], []}, fn id, {task_ids, unique_ids} ->
+      normalized = normalize_lookup_id(id)
+
+      cond do
+        is_nil(normalized) ->
+          {task_ids, unique_ids}
+
+        Regex.match?(~r/^[0-9a-f]{24}$/i, normalized) ->
+          {[normalized | task_ids], unique_ids}
+
+        Regex.match?(~r/^\d+$/, normalized) ->
+          {task_ids, [normalized | unique_ids]}
+
+        true ->
+          {[normalized | task_ids], unique_ids}
+      end
+    end)
+    |> then(fn {task_ids, unique_ids} ->
+      {Enum.reverse(task_ids), Enum.reverse(unique_ids)}
+    end)
+  end
+
+  defp normalize_lookup_id(id) when is_binary(id) do
+    id
+    |> String.trim()
+    |> case do
+      "T-" <> number -> number
+      "" -> nil
+      other -> other
+    end
+  end
+
+  defp normalize_lookup_id(_id), do: nil
 
   # GET /v3/project/{projectId}/taskflowstatus/search
   defp resolve_status_index(project_id) do
@@ -226,7 +301,9 @@ defmodule SymphonyElixir.Teambition.Client do
       labels: extract_tag_ids(task),
       assigned_to_worker: assigned_to_worker?(task),
       created_at: parse_dt(task["created"] || task["createdAt"]),
-      updated_at: parse_dt(task["updated"] || task["updatedAt"])
+      updated_at: parse_dt(task["updated"] || task["updatedAt"]),
+      start_date: parse_dt(task["startDate"]),
+      due_date: parse_dt(task["dueDate"])
     }
   end
 

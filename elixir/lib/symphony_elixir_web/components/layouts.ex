@@ -49,6 +49,10 @@ defmodule SymphonyElixirWeb.Layouts do
   def app(assigns) do
     ~H"""
     <main class="app-shell">
+      <nav class="top-nav" aria-label="Dashboard sections">
+        <a href="/">Live</a>
+        <a href="/history">History</a>
+      </nav>
       {@inner_content}
     </main>
     """

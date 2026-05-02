@@ -23,26 +23,57 @@ tracker:
     - "未通过"
     - "废弃"
 polling:
-  interval_ms: 5000
+  interval_ms: 10000
 workspace:
-  root: ~/code/symphony-workspaces
+  root: ~/symphony-workspaces
 hooks:
+  # Mirror the local Symphony fork into each workspace so Codex sees the *current*
+  # source code (including uncommitted changes), instead of cloning a public fork.
+  # rsync excludes deps/build artifacts and the `tools/` dir which carries secrets.
   after_create: |
-    git clone --depth 1 https://github.com/openai/symphony .
-    if command -v mise >/dev/null 2>&1; then
-      cd elixir && mise trust && mise exec -- mix deps.get
+    SRC="/Users/v1ki/Documents/projs/source/symphony"
+    if [ ! -d "$SRC/elixir" ]; then
+      echo "[after_create] source dir $SRC missing" >&2
+      exit 1
     fi
-  before_remove: |
-    cd elixir && mise exec -- mix workspace.before_remove
+    rsync -a --delete \
+      --exclude '.git/' \
+      --exclude '_build/' \
+      --exclude 'deps/' \
+      --exclude 'node_modules/' \
+      --exclude 'tools/' \
+      --exclude '.elixir_ls/' \
+      --exclude '.DS_Store' \
+      "$SRC/" .
+    # Mark this checkout for the agent so it knows the layout.
+    cat > AGENT_README.md <<'EOF'
+    This workspace is a snapshot of `~/Documents/projs/source/symphony`
+    (the V1ki fork of openai/symphony) at dispatch time. The Elixir project lives
+    in `./elixir/`. Use `cd elixir && mix compile && mix test` to verify changes.
+    Do not commit; this is an ephemeral workspace.
+    EOF
 agent:
-  max_concurrent_agents: 10
-  max_turns: 20
+  max_concurrent_agents: 1
+  max_turns: 5
 codex:
-  command: codex --config shell_environment_policy.inherit=all --config 'model="gpt-5.5"' --config model_reasoning_effort=xhigh app-server
+  command: codex --config shell_environment_policy.inherit=all app-server
   approval_policy: never
   thread_sandbox: workspace-write
   turn_sandbox_policy:
     type: workspaceWrite
+    writableRoots:
+      - "/Users/v1ki/symphony-workspaces"
+    readOnlyAccess:
+      type: fullAccess
+    networkAccess: true
+    excludeTmpdirEnvVar: false
+    excludeSlashTmp: false
+  # 默认 5s 太短：codex app-server 冷启动 + 第一轮模型响应通常 30-90s
+  read_timeout_ms: 180000
+server:
+  # macOS 5000 被 AirPlay Receiver 占用，4000 / 8080 经常被其它进程抢；5050 实测干净
+  port: 5050
+  host: "127.0.0.1"
 ---
 
 You are working on a Teambition task `{{ issue.identifier }}` (id `{{ issue.id }}`).
@@ -77,6 +108,17 @@ Instructions:
 3. Final message must report completed actions and blockers only. Do not include "next steps for user".
 
 Work only in the provided repository copy. Do not touch any other path.
+
+## 时间精确化（兜底）
+
+Symphony 框架会在 dispatch 时和你完成任务时分别写入 `startDate` / `dueDate`。
+如果你看到任务的 startDate 或 dueDate 仍为 null（通过 teambition_api GET 任务可见），
+请用以下接口补齐：
+
+- 开始时间：teambition_api({"path": "/v3/task/{{ issue.id }}/startdate", "method": "PUT", "body": {"startDate": "<UTC ISO 8601>"}})
+- 结束时间（完成任务流转之前的最后一步）：teambition_api({"path": "/v3/task/{{ issue.id }}/duedate", "method": "PUT", "body": {"dueDate": "<UTC ISO 8601>"}})
+
+UTC ISO 8601 格式举例："2026-05-01T08:32:24.940Z"。一般框架已经写好，这一步只是兜底。
 
 ## Prerequisite: `teambition_api` tool is available
 

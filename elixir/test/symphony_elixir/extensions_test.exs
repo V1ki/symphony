@@ -270,6 +270,73 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert {:error, :boom} = Adapter.update_issue_state("issue-1", "Boom")
   end
 
+  test "teambition adapter updates only start date when only start date is provided" do
+    Application.put_env(:symphony_elixir, :teambition_client_module, FakeTeambitionClient)
+    start_date = ~U[2026-05-01 08:32:24.940000Z]
+    Process.put({FakeTeambitionClient, :request_result}, {:ok, %{"code" => 204}})
+
+    assert :ok = Adapter.update_issue_dates("issue-1", start_date: start_date)
+    assert_receive {:request_called, "/v3/task/issue-1/startdate", :put, %{startDate: "2026-05-01T08:32:24.940000Z"}}
+    refute_receive {:request_called, "/v3/task/issue-1/duedate", :put, _}
+  end
+
+  test "teambition adapter updates only due date when only due date is provided" do
+    Application.put_env(:symphony_elixir, :teambition_client_module, FakeTeambitionClient)
+    due_date = ~U[2026-05-01 09:45:10.123000Z]
+    Process.put({FakeTeambitionClient, :request_result}, {:ok, %{"code" => 204}})
+
+    assert :ok = Adapter.update_issue_dates("issue-1", due_date: due_date)
+    assert_receive {:request_called, "/v3/task/issue-1/duedate", :put, %{dueDate: "2026-05-01T09:45:10.123000Z"}}
+    refute_receive {:request_called, "/v3/task/issue-1/startdate", :put, _}
+  end
+
+  test "teambition adapter updates start and due dates when both are provided" do
+    Application.put_env(:symphony_elixir, :teambition_client_module, FakeTeambitionClient)
+    start_date = ~U[2026-05-01 08:32:24.940000Z]
+    due_date = ~U[2026-05-01 09:45:10.123000Z]
+
+    Process.put(
+      {FakeTeambitionClient, :request_results},
+      [{:ok, %{"code" => 204}}, {:ok, %{"code" => 204}}]
+    )
+
+    assert :ok = Adapter.update_issue_dates("issue-1", start_date: start_date, due_date: due_date)
+    assert_receive {:request_called, "/v3/task/issue-1/startdate", :put, %{startDate: "2026-05-01T08:32:24.940000Z"}}
+    assert_receive {:request_called, "/v3/task/issue-1/duedate", :put, %{dueDate: "2026-05-01T09:45:10.123000Z"}}
+  end
+
+  test "teambition adapter skips date updates when both dates are nil" do
+    Application.put_env(:symphony_elixir, :teambition_client_module, FakeTeambitionClient)
+
+    assert :ok = Adapter.update_issue_dates("issue-1", start_date: nil, due_date: nil)
+    refute_receive {:request_called, _, _, _}
+  end
+
+  test "teambition adapter propagates date update errors" do
+    Application.put_env(:symphony_elixir, :teambition_client_module, FakeTeambitionClient)
+    start_date = ~U[2026-05-01 08:32:24.940000Z]
+    Process.put({FakeTeambitionClient, :request_result}, {:error, :boom})
+
+    assert {:error, :boom} = Adapter.update_issue_dates("issue-1", start_date: start_date)
+    assert_receive {:request_called, "/v3/task/issue-1/startdate", :put, %{startDate: "2026-05-01T08:32:24.940000Z"}}
+  end
+
+  test "tracker delegates date updates when adapter implements them" do
+    Application.put_env(:symphony_elixir, :teambition_client_module, FakeTeambitionClient)
+    write_workflow_file!(Workflow.workflow_file_path(), tracker_kind: "teambition")
+    start_date = ~U[2026-05-01 08:32:24.940000Z]
+    Process.put({FakeTeambitionClient, :request_result}, {:ok, %{"code" => 204}})
+
+    assert :ok = Tracker.update_issue_dates("issue-1", start_date: start_date)
+    assert_receive {:request_called, "/v3/task/issue-1/startdate", :put, %{startDate: "2026-05-01T08:32:24.940000Z"}}
+  end
+
+  test "tracker date update is no-op when adapter does not implement date updates" do
+    write_workflow_file!(Workflow.workflow_file_path(), tracker_kind: "memory")
+
+    assert :ok = Tracker.update_issue_dates("issue-1", start_date: ~U[2026-05-01 08:32:24.940000Z])
+  end
+
   test "phoenix observability api preserves state, issue, and refresh responses" do
     snapshot = static_snapshot()
     orchestrator_name = Module.concat(__MODULE__, :ObservabilityApiOrchestrator)

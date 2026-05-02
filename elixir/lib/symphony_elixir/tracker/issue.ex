@@ -21,7 +21,9 @@ defmodule SymphonyElixir.Tracker.Issue do
     labels: [],
     assigned_to_worker: true,
     created_at: nil,
-    updated_at: nil
+    updated_at: nil,
+    start_date: nil,
+    due_date: nil
   ]
 
   @type t :: %__MODULE__{
@@ -37,7 +39,9 @@ defmodule SymphonyElixir.Tracker.Issue do
           labels: [String.t()],
           assigned_to_worker: boolean(),
           created_at: DateTime.t() | nil,
-          updated_at: DateTime.t() | nil
+          updated_at: DateTime.t() | nil,
+          start_date: DateTime.t() | nil,
+          due_date: DateTime.t() | nil
         }
 
   @spec label_names(t()) :: [String.t()]

@@ -27,13 +27,21 @@ defmodule SymphonyElixir.Tracker.Memory do
 
   @spec fetch_issue_states_by_ids([String.t()]) :: {:ok, [Issue.t()]} | {:error, term()}
   def fetch_issue_states_by_ids(issue_ids) do
-    wanted_ids = MapSet.new(issue_ids)
+    wanted_ids = issue_ids |> Enum.flat_map(&lookup_ids/1) |> MapSet.new()
 
     {:ok,
-     Enum.filter(issue_entries(), fn %Issue{id: id} ->
-       MapSet.member?(wanted_ids, id)
+     Enum.filter(issue_entries(), fn %Issue{id: id, identifier: identifier} ->
+       MapSet.member?(wanted_ids, id) or
+         MapSet.member?(wanted_ids, identifier) or
+         MapSet.member?(wanted_ids, unique_id_from_identifier(identifier))
      end)}
   end
+
+  defp unique_id_from_identifier("T-" <> unique_id), do: unique_id
+  defp unique_id_from_identifier(identifier), do: identifier
+
+  defp lookup_ids("T-" <> unique_id = identifier), do: [identifier, unique_id]
+  defp lookup_ids(id), do: [id]
 
   @spec create_comment(String.t(), String.t()) :: :ok | {:error, term()}
   def create_comment(issue_id, body) do
