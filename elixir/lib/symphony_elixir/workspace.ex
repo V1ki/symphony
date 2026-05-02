@@ -4,7 +4,7 @@ defmodule SymphonyElixir.Workspace do
   """
 
   require Logger
-  alias SymphonyElixir.{Config, PathSafety, SSH}
+  alias SymphonyElixir.{Config, PathSafety, RepoSettings, SSH}
 
   @remote_workspace_marker "__SYMPHONY_WORKSPACE__"
 
@@ -298,7 +298,11 @@ defmodule SymphonyElixir.Workspace do
 
     task =
       Task.async(fn ->
-        System.cmd("sh", ["-lc", command], cd: workspace, stderr_to_stdout: true)
+        System.cmd("sh", ["-lc", command],
+          cd: workspace,
+          env: hook_env(issue_context),
+          stderr_to_stdout: true
+        )
       end)
 
     case Task.yield(task, timeout_ms) do
@@ -319,7 +323,15 @@ defmodule SymphonyElixir.Workspace do
 
     Logger.info("Running workspace hook hook=#{hook_name} #{issue_log_context(issue_context)} workspace=#{workspace} worker_host=#{worker_host}")
 
-    case run_remote_command(worker_host, "cd #{shell_escape(workspace)} && #{command}", timeout_ms) do
+    script =
+      [
+        hook_export_script(issue_context),
+        "cd #{shell_escape(workspace)}",
+        command
+      ]
+      |> Enum.join("\n")
+
+    case run_remote_command(worker_host, script, timeout_ms) do
       {:ok, cmd_result} ->
         handle_hook_command_result(cmd_result, workspace, issue_context, hook_name)
 
@@ -453,27 +465,43 @@ defmodule SymphonyElixir.Workspace do
     "'" <> String.replace(value, "'", "'\"'\"'") <> "'"
   end
 
+  defp hook_env(issue_context) do
+    [
+      {"ISSUE_IDENTIFIER", Map.get(issue_context, :issue_identifier) || ""},
+      {"ISSUE_REPO_URL", Map.get(issue_context, :repo_url) || ""}
+    ]
+  end
+
+  defp hook_export_script(issue_context) do
+    hook_env(issue_context)
+    |> Enum.map(fn {key, value} -> "export #{key}=#{shell_escape(value)}" end)
+    |> Enum.join("\n")
+  end
+
   defp worker_host_for_log(nil), do: "local"
   defp worker_host_for_log(worker_host), do: worker_host
 
-  defp issue_context(%{id: issue_id, identifier: identifier}) do
+  defp issue_context(%{id: issue_id, identifier: identifier} = issue) do
     %{
       issue_id: issue_id,
-      issue_identifier: identifier || "issue"
+      issue_identifier: identifier || "issue",
+      repo_url: RepoSettings.issue_repo_url(identifier, Map.get(issue, :repo_url))
     }
   end
 
   defp issue_context(identifier) when is_binary(identifier) do
     %{
       issue_id: nil,
-      issue_identifier: identifier
+      issue_identifier: identifier,
+      repo_url: RepoSettings.issue_override(identifier)
     }
   end
 
   defp issue_context(_identifier) do
     %{
       issue_id: nil,
-      issue_identifier: "issue"
+      issue_identifier: "issue",
+      repo_url: nil
     }
   end
 

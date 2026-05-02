@@ -140,7 +140,8 @@ defmodule SymphonyElixir.Orchestrator do
                 identifier: running_entry.identifier,
                 delay_type: :continuation,
                 worker_host: Map.get(running_entry, :worker_host),
-                workspace_path: Map.get(running_entry, :workspace_path)
+                workspace_path: Map.get(running_entry, :workspace_path),
+                repo_url: running_entry_repo_url(running_entry),
               })
 
             _ ->
@@ -152,7 +153,8 @@ defmodule SymphonyElixir.Orchestrator do
                 identifier: running_entry.identifier,
                 error: "agent exited: #{inspect(reason)}",
                 worker_host: Map.get(running_entry, :worker_host),
-                workspace_path: Map.get(running_entry, :workspace_path)
+                workspace_path: Map.get(running_entry, :workspace_path),
+                repo_url: running_entry_repo_url(running_entry),
               })
           end
 
@@ -504,7 +506,8 @@ defmodule SymphonyElixir.Orchestrator do
       |> terminate_running_issue(issue_id, false)
       |> schedule_issue_retry(issue_id, next_attempt, %{
         identifier: identifier,
-        error: "stalled for #{elapsed_ms}ms without codex activity"
+        error: "stalled for #{elapsed_ms}ms without codex activity",
+        repo_url: running_entry_repo_url(running_entry)
       })
     else
       state
@@ -761,7 +764,8 @@ defmodule SymphonyElixir.Orchestrator do
         schedule_issue_retry(state, issue.id, next_attempt, %{
           identifier: issue.identifier,
           error: "failed to spawn agent: #{inspect(reason)}",
-          worker_host: worker_host
+          worker_host: worker_host,
+          repo_url: issue.repo_url
         })
     end
   end
@@ -939,6 +943,7 @@ defmodule SymphonyElixir.Orchestrator do
          attempt + 1,
          Map.merge(metadata, %{
            identifier: issue.identifier,
+           repo_url: issue.repo_url,
            error: "no available orchestrator slots"
          })
        )}
@@ -1078,6 +1083,9 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp running_entry_session_id(_running_entry), do: "n/a"
 
+  defp running_entry_repo_url(%{issue: %Issue{repo_url: repo_url}}), do: repo_url
+  defp running_entry_repo_url(_running_entry), do: nil
+
   defp issue_context(%Issue{id: issue_id, identifier: identifier}) do
     "issue_id=#{issue_id} issue_identifier=#{identifier}"
   end
@@ -1136,6 +1144,7 @@ defmodule SymphonyElixir.Orchestrator do
           state: metadata.issue.state,
           worker_host: Map.get(metadata, :worker_host),
           workspace_path: Map.get(metadata, :workspace_path),
+          repo_url: Map.get(metadata.issue, :repo_url),
           session_id: metadata.session_id,
           codex_app_server_pid: metadata.codex_app_server_pid,
           codex_input_tokens: metadata.codex_input_tokens,
@@ -1160,7 +1169,8 @@ defmodule SymphonyElixir.Orchestrator do
           identifier: Map.get(retry, :identifier),
           error: Map.get(retry, :error),
           worker_host: Map.get(retry, :worker_host),
-          workspace_path: Map.get(retry, :workspace_path)
+          workspace_path: Map.get(retry, :workspace_path),
+          repo_url: Map.get(retry, :repo_url)
         }
       end)
 

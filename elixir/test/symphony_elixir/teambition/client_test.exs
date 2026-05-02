@@ -1,6 +1,8 @@
 defmodule SymphonyElixir.Teambition.ClientTest do
   use SymphonyElixir.TestSupport
 
+  alias SymphonyElixir.RepoSettings
+
   @status_index %{"todo" => "未完成", "done" => "已完成"}
 
   test "normalizes description dependencies from English and Chinese notes" do
@@ -64,6 +66,41 @@ defmodule SymphonyElixir.Teambition.ClientTest do
     tasks = [task(301, "T-301", note: "Depends on: T-9999")]
 
     assert [%Issue{blocked_by: [%{id: nil, identifier: "T-9999", state: nil}]}] = normalize_tasks(tasks)
+  end
+
+  test "normalizes Repo magic line into issue repo_url" do
+    tasks = [task(401, "T-401", note: "Repo: git@github.com:V1ki/symphony.git\nBody")]
+
+    assert [%Issue{repo_url: "git@github.com:V1ki/symphony.git"}] = normalize_tasks(tasks)
+  end
+
+  test "normalizes yaml frontmatter repo into issue repo_url" do
+    tasks = [task(402, "T-402", note: "---\nrepo: https://github.com/V1ki/symphony.git\n---\nBody")]
+
+    assert [%Issue{repo_url: "https://github.com/V1ki/symphony.git"}] = normalize_tasks(tasks)
+  end
+
+  test "repo_url precedence is description then project default then workflow global default" do
+    write_workflow_file!(Workflow.workflow_file_path(), default_repo_url: "git@github.com:global/repo.git")
+    Application.put_env(:symphony_elixir, :default_repo_url, "git@github.com:project/repo.git")
+
+    assert [%Issue{repo_url: "git@github.com:description/repo.git"}] =
+             normalize_tasks([task(403, "T-403", note: "Repo: git@github.com:description/repo.git")])
+
+    assert [%Issue{repo_url: "git@github.com:project/repo.git"}] =
+             normalize_tasks([task(404, "T-404", note: "No repo here")])
+
+    Application.delete_env(:symphony_elixir, :default_repo_url)
+
+    assert [%Issue{repo_url: "git@github.com:global/repo.git"}] =
+             normalize_tasks([task(405, "T-405", note: "No repo here")])
+  end
+
+  test "repo override takes priority over description repo" do
+    RepoSettings.put_issue_override("T-406", "git@github.com:override/repo.git")
+
+    assert [%Issue{repo_url: "git@github.com:override/repo.git"}] =
+             normalize_tasks([task(406, "T-406", note: "Repo: git@github.com:description/repo.git")])
   end
 
   defp normalize_tasks(tasks) do

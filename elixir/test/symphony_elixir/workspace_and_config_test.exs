@@ -231,6 +231,34 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     end
   end
 
+  test "workspace passes issue identifier and repo url to after_create hook env" do
+    workspace_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-workspace-hook-env-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        hook_after_create: "printf '%s\\n%s\\n' \"$ISSUE_IDENTIFIER\" \"$ISSUE_REPO_URL\" > hook-env.txt"
+      )
+
+      issue = %Issue{
+        id: "issue-env",
+        identifier: "T-ENV",
+        title: "Env",
+        state: "Todo",
+        repo_url: "git@github.com:V1ki/symphony.git"
+      }
+
+      assert {:ok, workspace} = Workspace.create_for_issue(issue)
+      assert File.read!(Path.join(workspace, "hook-env.txt")) == "T-ENV\ngit@github.com:V1ki/symphony.git\n"
+    after
+      File.rm_rf(workspace_root)
+    end
+  end
+
   test "workspace creates an empty directory when no bootstrap hook is configured" do
     workspace_root =
       Path.join(

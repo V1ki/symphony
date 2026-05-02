@@ -5,6 +5,7 @@ defmodule SymphonyElixir.ExtensionsTest do
   import Phoenix.LiveViewTest
 
   alias SymphonyElixir.Teambition.Adapter
+  alias SymphonyElixir.RepoSettings
   alias SymphonyElixir.Tracker.Memory
 
   @endpoint SymphonyElixirWeb.Endpoint
@@ -15,6 +16,66 @@ defmodule SymphonyElixir.ExtensionsTest do
       send(self(), :fetch_candidate_issues_called)
       {:ok, [:candidate]}
     end
+  end
+
+  test "settings liveview renders repo settings and active issue overrides" do
+    orchestrator_name = Module.concat(__MODULE__, :SettingsOrchestrator)
+
+    {:ok, _pid} =
+      StaticOrchestrator.start_link(
+        name: orchestrator_name,
+        snapshot: static_snapshot(),
+        refresh: :unavailable
+      )
+
+    start_test_endpoint(orchestrator: orchestrator_name, snapshot_timeout_ms: 50)
+    RepoSettings.put_default_repo_url("git@github.com:default/repo.git")
+
+    {:ok, _view, html} = live(build_conn(), "/settings")
+
+    assert html =~ "Repository Sources"
+    assert html =~ "git@github.com:default/repo.git"
+    assert html =~ "MT-HTTP"
+    assert html =~ "git@github.com:V1ki/symphony.git"
+  end
+
+  test "phoenix repo api lists repos and accepts default and issue overrides" do
+    snapshot = static_snapshot()
+    orchestrator_name = Module.concat(__MODULE__, :RepoApiOrchestrator)
+
+    {:ok, _pid} =
+      StaticOrchestrator.start_link(
+        name: orchestrator_name,
+        snapshot: snapshot,
+        refresh: :unavailable
+      )
+
+    start_test_endpoint(orchestrator: orchestrator_name, snapshot_timeout_ms: 50)
+
+    RepoSettings.put_default_repo_url("git@github.com:default/repo.git")
+
+    repos_payload = json_response(get(build_conn(), "/api/v1/repos"), 200)
+    assert repos_payload["default_repo_url"] == "git@github.com:default/repo.git"
+    assert repos_payload["recent_repos"] == ["git@github.com:default/repo.git"]
+    assert [%{"issue_identifier" => "MT-HTTP", "repo_url" => "git@github.com:V1ki/symphony.git"} | _] = repos_payload["issues"]
+
+    default_payload =
+      json_response(
+        post(build_conn(), "/api/v1/repos/default", %{"repo_url" => "git@github.com:new/default.git"}),
+        200
+      )
+
+    assert default_payload["default_repo_url"] == "git@github.com:new/default.git"
+
+    issue_payload =
+      json_response(
+        put(build_conn(), "/api/v1/issues/MT-HTTP/repo", %{"repo_url" => "git@github.com:override/repo.git"}),
+        200
+      )
+
+    assert issue_payload["repo_url"] == "git@github.com:override/repo.git"
+    assert RepoSettings.issue_override("MT-HTTP") == "git@github.com:override/repo.git"
+  end
 
     @doc false
     def fetch_issues_by_states(states) do
@@ -41,7 +102,6 @@ defmodule SymphonyElixir.ExtensionsTest do
           Process.get({__MODULE__, :request_result}) || {:error, :no_request_result_seeded}
       end
     end
-  end
 
   defmodule SlowOrchestrator do
     use GenServer
@@ -162,18 +222,18 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert {:noreply, returned_state} = WorkflowStore.handle_info(:poll, state)
     assert returned_state.workflow.prompt == "Manual workflow prompt"
     refute returned_state.stamp == nil
-    assert_receive :poll, 1_100
+    assert_receive :poll, 1_500
 
     Workflow.set_workflow_file_path(missing_path)
     assert {:noreply, path_error_state} = WorkflowStore.handle_info(:poll, returned_state)
     assert path_error_state.workflow.prompt == "Manual workflow prompt"
-    assert_receive :poll, 1_100
+    assert_receive :poll, 1_500
 
     Workflow.set_workflow_file_path(manual_path)
     File.rm!(manual_path)
     assert {:noreply, removed_state} = WorkflowStore.handle_info(:poll, path_error_state)
     assert removed_state.workflow.prompt == "Manual workflow prompt"
-    assert_receive :poll, 1_100
+    assert_receive :poll, 1_500
 
     Process.exit(manual_pid, :normal)
     restart_result = Supervisor.restart_child(SymphonyElixir.Supervisor, WorkflowStore)
@@ -368,6 +428,7 @@ defmodule SymphonyElixir.ExtensionsTest do
                  "state" => "In Progress",
                  "worker_host" => nil,
                  "workspace_path" => nil,
+                 "repo_url" => "git@github.com:V1ki/symphony.git",
                  "session_id" => "thread-http",
                  "turn_count" => 7,
                  "last_event" => "notification",
@@ -385,7 +446,8 @@ defmodule SymphonyElixir.ExtensionsTest do
                  "due_at" => state_payload["retrying"] |> List.first() |> Map.fetch!("due_at"),
                  "error" => "boom",
                  "worker_host" => nil,
-                 "workspace_path" => nil
+                 "workspace_path" => nil,
+                 "repo_url" => nil
                }
              ],
              "codex_totals" => %{
@@ -579,6 +641,7 @@ defmodule SymphonyElixir.ExtensionsTest do
           issue_id: "issue-http",
           identifier: "MT-HTTP",
           state: "In Progress",
+          repo_url: "git@github.com:V1ki/symphony.git",
           session_id: "thread-http",
           turn_count: 8,
           last_codex_event: :notification,

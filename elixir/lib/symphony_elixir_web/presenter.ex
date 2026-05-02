@@ -3,7 +3,7 @@ defmodule SymphonyElixirWeb.Presenter do
   Shared projections for the observability API and dashboard.
   """
 
-  alias SymphonyElixir.{Config, Orchestrator, StatusDashboard}
+  alias SymphonyElixir.{Config, Orchestrator, RepoSettings, StatusDashboard}
 
   @spec state_payload(GenServer.name(), timeout()) :: map()
   def state_payload(orchestrator, snapshot_timeout_ms) do
@@ -30,6 +30,32 @@ defmodule SymphonyElixirWeb.Presenter do
         %{generated_at: generated_at, error: %{code: "snapshot_unavailable", message: "Snapshot unavailable"}}
     end
   end
+
+  @spec repo_payload(GenServer.name(), timeout()) :: map()
+  def repo_payload(orchestrator, snapshot_timeout_ms) do
+    state_payload = state_payload(orchestrator, snapshot_timeout_ms)
+
+    issues =
+      ((state_payload[:running] || []) ++ (state_payload[:retrying] || []))
+      |> Enum.map(fn entry ->
+        %{
+          issue_id: entry.issue_id,
+          issue_identifier: entry.issue_identifier,
+          status: if(Map.has_key?(entry, :attempt), do: "retrying", else: "running"),
+          repo_url: RepoSettings.issue_repo_url(entry.issue_identifier, Map.get(entry, :repo_url)),
+          configured_repo_url: Map.get(entry, :repo_url),
+          override_repo_url: RepoSettings.issue_override(entry.issue_identifier)
+        }
+      end)
+
+    %{
+      generated_at: state_payload[:generated_at],
+      default_repo_url: RepoSettings.default_repo_url(),
+      recent_repos: RepoSettings.recent_repos(),
+      issues: issues
+    }
+  end
+
 
   @spec issue_payload(String.t(), GenServer.name(), timeout()) :: {:ok, map()} | {:error, :issue_not_found}
   def issue_payload(issue_identifier, orchestrator, snapshot_timeout_ms) when is_binary(issue_identifier) do
@@ -102,6 +128,7 @@ defmodule SymphonyElixirWeb.Presenter do
       state: entry.state,
       worker_host: Map.get(entry, :worker_host),
       workspace_path: Map.get(entry, :workspace_path),
+      repo_url: Map.get(entry, :repo_url),
       session_id: entry.session_id,
       turn_count: Map.get(entry, :turn_count, 0),
       last_event: entry.last_codex_event,
@@ -124,7 +151,8 @@ defmodule SymphonyElixirWeb.Presenter do
       due_at: due_at_iso8601(entry.due_in_ms),
       error: entry.error,
       worker_host: Map.get(entry, :worker_host),
-      workspace_path: Map.get(entry, :workspace_path)
+      workspace_path: Map.get(entry, :workspace_path),
+      repo_url: Map.get(entry, :repo_url)
     }
   end
 

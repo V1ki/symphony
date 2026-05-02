@@ -51,6 +51,7 @@ defmodule SymphonyElixirWeb.Layouts do
     <main class="app-shell">
       <nav class="top-nav" aria-label="Dashboard sections">
         <a href="/">Live</a>
+        <a href="/settings">Settings</a>
         <a href="/history">History</a>
       </nav>
       {@inner_content}

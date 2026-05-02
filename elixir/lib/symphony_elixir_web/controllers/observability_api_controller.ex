@@ -6,6 +6,7 @@ defmodule SymphonyElixirWeb.ObservabilityApiController do
   use Phoenix.Controller, formats: [:json]
 
   alias Plug.Conn
+  alias SymphonyElixir.RepoSettings
   alias SymphonyElixirWeb.{Endpoint, Presenter}
 
   @spec state(Conn.t(), map()) :: Conn.t()
@@ -35,6 +36,35 @@ defmodule SymphonyElixirWeb.ObservabilityApiController do
       {:error, :unavailable} ->
         error_response(conn, 503, "orchestrator_unavailable", "Orchestrator is unavailable")
     end
+  end
+
+  @spec repos(Conn.t(), map()) :: Conn.t()
+  def repos(conn, _params) do
+    json(conn, Presenter.repo_payload(orchestrator(), snapshot_timeout_ms()))
+  end
+
+  @spec set_default_repo(Conn.t(), map()) :: Conn.t()
+  def set_default_repo(conn, params) do
+    repo_url = params["repo_url"] || params["url"] || params["default_repo_url"]
+    normalized = RepoSettings.put_default_repo_url(repo_url)
+
+    json(conn, %{
+      default_repo_url: normalized,
+      recent_repos: RepoSettings.recent_repos()
+    })
+  end
+
+  @spec set_issue_repo(Conn.t(), map()) :: Conn.t()
+  def set_issue_repo(conn, %{"issue_identifier" => issue_identifier} = params) do
+    repo_url = params["repo_url"] || params["url"]
+    normalized = RepoSettings.put_issue_override(issue_identifier, repo_url)
+
+    json(conn, %{
+      issue_identifier: issue_identifier,
+      repo_url: normalized,
+      override_repo_url: RepoSettings.issue_override(issue_identifier),
+      recent_repos: RepoSettings.recent_repos()
+    })
   end
 
   @spec method_not_allowed(Conn.t(), map()) :: Conn.t()

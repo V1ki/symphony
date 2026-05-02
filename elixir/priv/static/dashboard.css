@@ -726,6 +726,61 @@ pre,
   font: inherit;
 }
 
+.settings-form,
+.settings-inline-form {
+  display: flex;
+  gap: 0.65rem;
+  align-items: center;
+  margin-top: 1rem;
+}
+
+.settings-form input,
+.settings-inline-form input {
+  min-height: 2.35rem;
+  padding: 0.46rem 0.72rem;
+  border: 1px solid var(--history-border-strong);
+  border-radius: 8px;
+  background: white;
+  color: var(--history-text);
+  font: inherit;
+}
+
+.settings-form input {
+  width: min(100%, 42rem);
+}
+
+.settings-inline-form {
+  margin-top: 0;
+}
+
+.settings-inline-form input {
+  width: min(100%, 26rem);
+}
+
+.repo-list {
+  display: grid;
+  gap: 0.55rem;
+  margin-top: 1rem;
+}
+
+.repo-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-items: center;
+  padding: 0.75rem 0;
+  border-top: 1px solid var(--history-border);
+}
+
+.repo-row code,
+.settings-table code {
+  overflow-wrap: anywhere;
+}
+
+.settings-table {
+  min-width: 900px;
+}
+
 .history-table {
   table-layout: fixed;
   min-width: 940px;

@@ -23,14 +23,24 @@ defmodule SymphonyElixir.CLI do
       :ok ->
         wait_for_shutdown()
 
+      {:ok, message} ->
+        IO.puts(message)
+        System.halt(0)
+
       {:error, message} ->
         IO.puts(:stderr, message)
         System.halt(1)
     end
   end
 
-  @spec evaluate([String.t()], deps()) :: :ok | {:error, String.t()}
-  def evaluate(args, deps \\ runtime_deps()) do
+  @spec evaluate([String.t()], deps()) :: :ok | {:ok, String.t()} | {:error, String.t()}
+  def evaluate(args, deps \\ runtime_deps())
+
+  def evaluate(["repo" | repo_args], deps) do
+    repo_command(repo_args, deps)
+  end
+
+  def evaluate(args, deps) do
     case OptionParser.parse(args, strict: @switches) do
       {opts, [], []} ->
         with :ok <- require_guardrails_acknowledgement(opts),
@@ -72,7 +82,13 @@ defmodule SymphonyElixir.CLI do
 
   @spec usage_message() :: String.t()
   defp usage_message do
-    "Usage: symphony [--logs-root <path>] [--port <port>] [path-to-WORKFLOW.md]"
+    """
+    Usage: symphony [--logs-root <path>] [--port <port>] [path-to-WORKFLOW.md]
+           symphony repo list
+           symphony repo set <issue_identifier> <url>
+           symphony repo default <url>
+    """
+    |> String.trim()
   end
 
   @spec runtime_deps() :: deps()
@@ -82,8 +98,111 @@ defmodule SymphonyElixir.CLI do
       set_workflow_file_path: &SymphonyElixir.Workflow.set_workflow_file_path/1,
       set_logs_root: &set_logs_root/1,
       set_server_port_override: &set_server_port_override/1,
+      repo_http_request: &repo_http_request/3,
       ensure_all_started: fn -> Application.ensure_all_started(:symphony_elixir) end
     }
+  end
+
+  defp repo_command(["list"], deps) do
+    with {:ok, payload} <- call_repo_api(deps, :get, "/api/v1/repos", %{}) do
+      {:ok, format_repo_list(payload)}
+    end
+  end
+
+  defp repo_command(["set", issue_identifier, repo_url], deps) do
+    path = "/api/v1/issues/#{URI.encode_www_form(issue_identifier)}/repo"
+
+    with {:ok, payload} <- call_repo_api(deps, :put, path, %{repo_url: repo_url}) do
+      {:ok, "Set #{payload["issue_identifier"] || issue_identifier} repo to #{payload["repo_url"] || "n/a"}"}
+    end
+  end
+
+  defp repo_command(["default", repo_url], deps) do
+    with {:ok, payload} <- call_repo_api(deps, :post, "/api/v1/repos/default", %{repo_url: repo_url}) do
+      {:ok, "Default repo set to #{payload["default_repo_url"] || "n/a"}"}
+    end
+  end
+
+  defp repo_command(_args, _deps), do: {:error, usage_message()}
+
+  defp call_repo_api(deps, method, path, body) do
+    request = Map.get(deps, :repo_http_request, &repo_http_request/3)
+
+    case request.(method, path, body) do
+      {:ok, payload} -> {:ok, payload}
+      {:error, reason} -> {:error, "Repository API request failed: #{inspect(reason)}"}
+    end
+  end
+
+  defp format_repo_list(payload) when is_map(payload) do
+    issue_lines =
+      payload
+      |> Map.get("issues", [])
+      |> Enum.map(fn issue ->
+        identifier = issue["issue_identifier"] || "n/a"
+        status = issue["status"] || "n/a"
+        repo_url = issue["repo_url"] || "n/a"
+        "#{identifier}\t#{status}\t#{repo_url}"
+      end)
+
+    lines =
+      [
+        "Default repo: #{payload["default_repo_url"] || "n/a"}",
+        "Active issues:"
+        | case issue_lines do
+            [] -> ["n/a"]
+            lines -> lines
+          end
+      ]
+
+    Enum.join(lines, "\n")
+  end
+
+  defp repo_http_request(method, path, body) do
+    :inets.start()
+
+    url =
+      "http://127.0.0.1:#{repo_api_port()}#{path}"
+      |> String.to_charlist()
+
+    headers = [{~c"accept", ~c"application/json"}]
+
+    request =
+      case method do
+        :get ->
+          {url, headers}
+
+        method when method in [:post, :put] ->
+          json_body = Jason.encode!(body)
+          {url, [{~c"content-type", ~c"application/json"} | headers], ~c"application/json", json_body}
+      end
+
+    case :httpc.request(method, request, [], body_format: :binary) do
+      {:ok, {{_version, status, _reason}, _headers, response_body}} when status in 200..299 ->
+        Jason.decode(response_body)
+
+      {:ok, {{_version, status, _reason}, _headers, response_body}} ->
+        {:error, {:http_status, status, response_body}}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp repo_api_port do
+    case System.get_env("SYMPHONY_PORT") do
+      nil ->
+        case Application.get_env(:symphony_elixir, :server_port_override) do
+          port when is_integer(port) and port >= 0 -> port
+          _ -> 5050
+        end
+
+      value ->
+        case Integer.parse(value) do
+          {port, ""} when port >= 0 -> port
+          _ -> 5050
+        end
+    end
   end
 
   defp maybe_set_logs_root(opts, deps) do

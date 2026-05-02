@@ -136,4 +136,56 @@ defmodule SymphonyElixir.CLITest do
 
     assert :ok = CLI.evaluate([@ack_flag, "WORKFLOW.md"], deps)
   end
+
+  test "repo list calls local repo api and formats active issues" do
+    parent = self()
+
+    deps = %{
+      repo_http_request: fn method, path, body ->
+        send(parent, {:repo_http_request, method, path, body})
+
+        {:ok,
+         %{
+           "default_repo_url" => "git@github.com:default/repo.git",
+           "issues" => [
+             %{
+               "issue_identifier" => "T-27",
+               "status" => "running",
+               "repo_url" => "git@github.com:V1ki/symphony.git"
+             }
+           ]
+         }}
+      end
+    }
+
+    assert {:ok, output} = CLI.evaluate(["repo", "list"], deps)
+    assert output =~ "Default repo: git@github.com:default/repo.git"
+    assert output =~ "T-27\trunning\tgit@github.com:V1ki/symphony.git"
+    assert_received {:repo_http_request, :get, "/api/v1/repos", %{}}
+  end
+
+  test "repo set and default call local repo api" do
+    parent = self()
+
+    deps = %{
+      repo_http_request: fn
+        :put, "/api/v1/issues/T-27/repo", %{repo_url: "git@github.com:issue/repo.git"} ->
+          send(parent, :repo_set)
+          {:ok, %{"issue_identifier" => "T-27", "repo_url" => "git@github.com:issue/repo.git"}}
+
+        :post, "/api/v1/repos/default", %{repo_url: "git@github.com:default/repo.git"} ->
+          send(parent, :repo_default)
+          {:ok, %{"default_repo_url" => "git@github.com:default/repo.git"}}
+      end
+    }
+
+    assert {:ok, "Set T-27 repo to git@github.com:issue/repo.git"} =
+             CLI.evaluate(["repo", "set", "T-27", "git@github.com:issue/repo.git"], deps)
+
+    assert {:ok, "Default repo set to git@github.com:default/repo.git"} =
+             CLI.evaluate(["repo", "default", "git@github.com:default/repo.git"], deps)
+
+    assert_received :repo_set
+    assert_received :repo_default
+  end
 end

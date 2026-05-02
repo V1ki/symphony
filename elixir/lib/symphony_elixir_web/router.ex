@@ -27,13 +27,20 @@ defmodule SymphonyElixirWeb.Router do
     live("/", DashboardLive, :index)
     live("/history", HistoryLive, :index)
     live("/history/:session_id", HistoryLive, :show)
+    live("/settings", SettingsLive, :index)
   end
 
   scope "/", SymphonyElixirWeb do
     get("/api/v1/state", ObservabilityApiController, :state)
+    get("/api/v1/repos", ObservabilityApiController, :repos)
+    post("/api/v1/repos/default", ObservabilityApiController, :set_default_repo)
+    put("/api/v1/issues/:issue_identifier/repo", ObservabilityApiController, :set_issue_repo)
 
     match(:*, "/", ObservabilityApiController, :method_not_allowed)
     match(:*, "/api/v1/state", ObservabilityApiController, :method_not_allowed)
+    match(:*, "/api/v1/repos", ObservabilityApiController, :method_not_allowed)
+    match(:*, "/api/v1/repos/default", ObservabilityApiController, :method_not_allowed)
+    match(:*, "/api/v1/issues/:issue_identifier/repo", ObservabilityApiController, :method_not_allowed)
     post("/api/v1/refresh", ObservabilityApiController, :refresh)
     match(:*, "/api/v1/refresh", ObservabilityApiController, :method_not_allowed)
     get("/api/v1/:issue_identifier", ObservabilityApiController, :issue)

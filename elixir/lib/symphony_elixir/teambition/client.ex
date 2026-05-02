@@ -29,7 +29,7 @@ defmodule SymphonyElixir.Teambition.Client do
   """
 
   require Logger
-  alias SymphonyElixir.{Config, Tracker.Issue}
+  alias SymphonyElixir.{Config, RepoSettings, Tracker.Issue}
 
   @page_size 50
   @dependency_line_regex ~r/^\s*(?:Depends on|Blocked by|依赖任务|依赖)[:：]\s*(.+)$/iu
@@ -333,16 +333,19 @@ defmodule SymphonyElixir.Teambition.Client do
   defp normalize_task(task, status_index, task_lookup) when is_map(task) and is_map(task_lookup) do
     id = task["id"] || task["_id"]
     state_name = task_state_name(task, status_index)
+    identifier = build_identifier(task)
+    description = task["note"] || task["description"]
 
     %Issue{
       id: id,
-      identifier: build_identifier(task),
+      identifier: identifier,
       title: task["content"] || task["title"],
-      description: task["note"] || task["description"],
+      description: description,
       priority: parse_priority(task["priority"]),
       state: state_name,
       branch_name: nil,
       url: build_url(task),
+      repo_url: RepoSettings.resolve_repo_url(identifier, description),
       assignee_id: task["executorId"],
       blocked_by: extract_blockers(task, task_lookup),
       labels: extract_tag_ids(task),

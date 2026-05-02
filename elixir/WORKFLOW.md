@@ -31,20 +31,24 @@ hooks:
   # source code (including uncommitted changes), instead of cloning a public fork.
   # rsync excludes deps/build artifacts and the `tools/` dir which carries secrets.
   after_create: |
-    SRC="/Users/v1ki/Documents/projs/source/symphony"
-    if [ ! -d "$SRC/elixir" ]; then
-      echo "[after_create] source dir $SRC missing" >&2
-      exit 1
+    if [ -n "$ISSUE_REPO_URL" ]; then
+      git clone --depth 1 "$ISSUE_REPO_URL" .
+    else
+      SRC="/Users/v1ki/Documents/projs/source/symphony"
+      if [ ! -d "$SRC/elixir" ]; then
+        echo "[after_create] source dir $SRC missing" >&2
+        exit 1
+      fi
+      rsync -a --delete \
+        --exclude '.git/' \
+        --exclude '_build/' \
+        --exclude 'deps/' \
+        --exclude 'node_modules/' \
+        --exclude 'tools/' \
+        --exclude '.elixir_ls/' \
+        --exclude '.DS_Store' \
+        "$SRC/" .
     fi
-    rsync -a --delete \
-      --exclude '.git/' \
-      --exclude '_build/' \
-      --exclude 'deps/' \
-      --exclude 'node_modules/' \
-      --exclude 'tools/' \
-      --exclude '.elixir_ls/' \
-      --exclude '.DS_Store' \
-      "$SRC/" .
     # Mark this checkout for the agent so it knows the layout.
     cat > AGENT_README.md <<'EOF'
     This workspace is a snapshot of `~/Documents/projs/source/symphony`
@@ -119,6 +123,12 @@ Symphony 框架会在 dispatch 时和你完成任务时分别写入 `startDate` 
 - 结束时间（完成任务流转之前的最后一步）：teambition_api({"path": "/v3/task/{{ issue.id }}/duedate", "method": "PUT", "body": {"dueDate": "<UTC ISO 8601>"}})
 
 UTC ISO 8601 格式举例："2026-05-01T08:32:24.940Z"。一般框架已经写好，这一步只是兜底。
+
+## Per-issue repo override
+
+任务 description 第一行可以写 `Repo: <git url>` 或 yaml frontmatter `repo: <git url>`，
+Symphony 会用这个仓库作为本任务的 workspace 源（覆盖全局默认）。
+不写则用项目默认或全局默认。
 
 ## Prerequisite: `teambition_api` tool is available
 
