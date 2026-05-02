@@ -108,9 +108,15 @@ defmodule SymphonyElixir.Teambition.Client do
   end
 
   defp do_fetch_by_ids(ids) do
-    with {:ok, tasks} <- batch_fetch_tasks(ids),
-         {:ok, status_index} <- status_index_for_tasks(tasks) do
-      {:ok, Enum.map(tasks, &normalize_task(&1, status_index))}
+    {task_ids, unique_ids} = split_task_and_unique_ids(ids)
+
+    with {:ok, by_id} <- batch_fetch_tasks(task_ids),
+         {:ok, by_unique} <- fetch_tasks_by_unique_ids(unique_ids) do
+      tasks = by_id ++ by_unique
+
+      with {:ok, status_index} <- status_index_for_tasks(tasks) do
+        {:ok, Enum.map(tasks, &normalize_task(&1, status_index))}
+      end
     end
   end
 
